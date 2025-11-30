@@ -3,34 +3,19 @@ import type { ReactElement } from 'react'
 import { AlertTriangle, Check, Loader2, LockKeyhole, ShieldUser, UserRound } from 'lucide-react'
 import Dashboard from './modules'
 import './style.css'
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
-const defaultPassword = import.meta.env.VITE_SENHA_PADRAO
-const SESSION_KEY = 'rhDashboardSession'
+import type { UserRegistration } from './models/user'
+import {
+  fetchUserByUsername,
+  hashPasswordPBKDF2,
+  isDefaultPassword,
+  normalizeUsername,
+  updateLastAccess,
+  updatePassword,
+  verifyPassword,
+} from './services/authService'
+import { clearSession, loadSession, saveSession } from './services/sessionService'
 
 type Mode = 'login' | 'set-password' | 'dashboard'
-
-type UserRegistration = {
-  id: number
-  username: string
-  password: string
-  is_authorized: boolean
-  type_user?: string
-  name?: string
-}
-
-function getSavedSession(): UserRegistration | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const stored = localStorage.getItem(SESSION_KEY)
-    if (!stored) return null
-    return JSON.parse(stored) as UserRegistration
-  } catch (error) {
-    console.error('Erro ao ler sessão local:', error)
-    return null
-  }
-}
 
 export function App(): ReactElement {
   const [username, setUsername] = useState('')
@@ -43,7 +28,7 @@ export function App(): ReactElement {
     type: null,
     message: '',
   })
-  const savedSession = getSavedSession()
+  const savedSession = loadSession()
   const [mode, setMode] = useState<Mode>(savedSession ? 'dashboard' : 'login')
   const [pendingUser, setPendingUser] = useState<{ id: number; username: string } | null>(null)
   const [currentUser, setCurrentUser] = useState<UserRegistration | null>(savedSession)
@@ -52,22 +37,6 @@ export function App(): ReactElement {
 
   function resetFeedback() {
     setFeedback({ type: null, message: '' })
-  }
-
-  function persistSession(user: UserRegistration) {
-    try {
-      localStorage.setItem(
-        SESSION_KEY,
-        JSON.stringify({
-          id: user.id,
-          username: user.username,
-          type_user: user.type_user,
-          name: user.name,
-        }),
-      )
-    } catch (error) {
-      console.error('Erro ao salvar sessão local:', error)
-    }
   }
 
   function handleLogout() {
@@ -80,77 +49,13 @@ export function App(): ReactElement {
     setConfirmPassword('')
     setRememberMe(false)
     resetFeedback()
-    try {
-      localStorage.removeItem(SESSION_KEY)
-    } catch (error) {
-      console.error('Erro ao limpar sessão local:', error)
-    }
-  }
-
-  async function hashPasswordPBKDF2(raw: string): Promise<string> {
-    // PBKDF2 com salt aleatório; prefixo identifica o algoritmo.
-    const encoder = new TextEncoder()
-    const salt = crypto.getRandomValues(new Uint8Array(16))
-    const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(raw), 'PBKDF2', false, ['deriveBits'])
-    const derived = await crypto.subtle.deriveBits(
-      {
-        name: 'PBKDF2',
-        salt,
-        iterations: 100_000,
-        hash: 'SHA-256',
-      },
-      keyMaterial,
-      256,
-    )
-    const derivedBytes = new Uint8Array(derived)
-    const combined = new Uint8Array(salt.length + derivedBytes.length)
-    combined.set(salt, 0)
-    combined.set(derivedBytes, salt.length)
-    const base64 = btoa(String.fromCharCode(...combined))
-    return `pbkdf2:${base64}`
-  }
-
-  async function verifyPassword(candidate: string, stored: string): Promise<boolean> {
-    if (stored.startsWith('pbkdf2:')) {
-      const base64 = stored.replace('pbkdf2:', '')
-      const combined = new Uint8Array(
-        atob(base64)
-          .split('')
-          .map((c) => c.charCodeAt(0)),
-      )
-      const salt = combined.slice(0, 16)
-      const storedHash = combined.slice(16)
-
-      const encoder = new TextEncoder()
-      const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(candidate), 'PBKDF2', false, [
-        'deriveBits',
-      ])
-      const derived = await crypto.subtle.deriveBits(
-        { name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
-        keyMaterial,
-        256,
-      )
-      const derivedHash = new Uint8Array(derived)
-      return derivedHash.length === storedHash.length && derivedHash.every((b, i) => b === storedHash[i])
-    }
-
-    // Compatibilidade: senhas antigas em texto puro.
-    return stored === candidate
+    clearSession()
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isLoading) return
-
-    if (!supabaseUrl || !supabaseKey) {
-      setFeedback({
-        type: 'error',
-        message: 'Configuração do banco ausente. Verifique o arquivo .env.',
-      })
-      return
-    }
-
-    const normalizedUsername = username.trim().toUpperCase()
+    const normalizedUsername = normalizeUsername(username)
     if (!normalizedUsername || !password) {
       setFeedback({
         type: 'error',
@@ -163,25 +68,7 @@ export function App(): ReactElement {
     resetFeedback()
 
     try {
-      const query = new URL(`${supabaseUrl}/rest/v1/user_registration`)
-      query.searchParams.set('username', `eq.${normalizedUsername}`)
-      query.searchParams.set('select', 'id,username,password,is_authorized,type_user,name')
-      query.searchParams.set('limit', '1')
-
-      const response = await fetch(query.toString(), {
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`Supabase response ${response.status}`)
-      }
-
-      const [user] = (await response.json()) as UserRegistration[]
-
+      const user = await fetchUserByUsername(normalizedUsername)
       if (!user) {
         setFeedback({
           type: 'error',
@@ -200,8 +87,8 @@ export function App(): ReactElement {
         return
       }
 
-      if (defaultPassword && user.password === defaultPassword) {
-        const matchesDefault = await verifyPassword(password, defaultPassword)
+      if (isDefaultPassword(user.password)) {
+        const matchesDefault = await verifyPassword(password, user.password)
         if (matchesDefault) {
           setMode('set-password')
           setPendingUser({ id: user.id, username: user.username })
@@ -239,14 +126,17 @@ export function App(): ReactElement {
       resetFeedback()
       setCurrentUser(user)
       setMode('dashboard')
-      persistSession(user)
+      saveSession(user)
       updateLastAccess(user.id)
       setPassword('')
     } catch (error) {
       console.error('Erro ao validar usuário no Supabase:', error)
       setFeedback({
         type: 'error',
-        message: 'Erro ao acessar o servidor. Tente novamente.',
+        message:
+          error instanceof Error && error.message.includes('Configuração do banco')
+            ? 'Configuração do banco ausente. Verifique o arquivo .env.'
+            : 'Erro ao acessar o servidor. Tente novamente.',
       })
     } finally {
       setIsLoading(false)
@@ -256,14 +146,6 @@ export function App(): ReactElement {
   async function handleSetPassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (isLoading || !pendingUser) return
-
-    if (!supabaseUrl || !supabaseKey) {
-      setFeedback({
-        type: 'error',
-        message: 'Configuração do banco ausente. Verifique o arquivo .env.',
-      })
-      return
-    }
 
     if (!newPassword || newPassword.length < 6) {
       setFeedback({
@@ -286,24 +168,7 @@ export function App(): ReactElement {
 
     try {
       const hashedPassword = await hashPasswordPBKDF2(newPassword)
-
-      const updateUrl = new URL(`${supabaseUrl}/rest/v1/user_registration`)
-      updateUrl.searchParams.set('id', `eq.${pendingUser.id}`)
-
-      const response = await fetch(updateUrl.toString(), {
-        method: 'PATCH',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation',
-        },
-        body: JSON.stringify({ password: hashedPassword }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`Supabase update ${response.status}`)
-      }
+      await updatePassword(pendingUser.id, hashedPassword)
 
       setFeedback({
         type: 'success',
@@ -318,30 +183,13 @@ export function App(): ReactElement {
       console.error('Erro ao salvar nova senha:', error)
       setFeedback({
         type: 'error',
-        message: 'Não foi possível salvar a nova senha. Tente novamente.',
+        message:
+          error instanceof Error && error.message.includes('Configuração do banco')
+            ? 'Configuração do banco ausente. Verifique o arquivo .env.'
+            : 'Não foi possível salvar a nova senha. Tente novamente.',
       })
     } finally {
       setIsLoading(false)
-    }
-  }
-
-  async function updateLastAccess(userId: number) {
-    if (!supabaseUrl || !supabaseKey) return
-    try {
-      const updateUrl = new URL(`${supabaseUrl}/rest/v1/user_registration`)
-      updateUrl.searchParams.set('id', `eq.${userId}`)
-
-      await fetch(updateUrl.toString(), {
-        method: 'PATCH',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ access_data: new Date().toISOString() }),
-      })
-    } catch (error) {
-      console.error('Erro ao registrar último acesso:', error)
     }
   }
 
