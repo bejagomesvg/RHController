@@ -312,7 +312,7 @@ const Security: React.FC<SecurityProps> = ({
                 </p>
               </div>
             </div>
-            <div className="flex justify-end gap-3">
+            <div className="flex justify-center gap-3">
               <button
                 type="button"
                 className="px-4 py-2 rounded-md bg-white/10 border border-white/15 text-white hover:bg-white/15 transition-colors"
@@ -351,7 +351,7 @@ const Security: React.FC<SecurityProps> = ({
                 </p>
               </div>
             </div>
-            <div className="flex justify-end gap-3">
+            <div className="flex justify-center gap-3">
               <button
                 type="button"
                 className="px-4 py-2 rounded-md bg-white/10 border border-white/15 text-white hover:bg-white/15 transition-colors"

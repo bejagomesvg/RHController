@@ -139,7 +139,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
     <form className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-6 mt-2" onSubmit={onSubmit}>
       {/* Row 1 - Nome / Usuario */}
       <div className="col-span-12 md:col-span-8">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Nome completo</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Nome completo</label>
         <input
           type="text"
           name="name"
@@ -153,7 +153,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
       </div>
 
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Usuario</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Usuario</label>
         <input
           type="text"
           name="username"
@@ -168,7 +168,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
 
       {/* Row 2 - Cargo / Perfil / Data */}
         <div className="col-span-12 md:col-span-5">
-          <label className="block text-[11px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Cargo</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Cargo</label>
           <input
           type="text"
           name="job_title"
@@ -179,7 +179,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
         />
       </div>
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Perfil</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Perfil</label>
         <select
           name="type_user"
           value={newUser.type_user}
@@ -191,13 +191,13 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
         </select>
       </div>
       <div className="col-span-12 md:col-span-3">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Data de Registro</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Data de Registro</label>
         <input type="date" value={newUser.date_registration} readOnly className={getInputClasses(false, true)} />
       </div>
 
       {/* Row 3 - Setor / Setor Autorizado */}
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Setor</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Setor</label>
         <select
           value={sectorSelection}
           onChange={(e) => {
@@ -217,7 +217,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
       </div>
 
       <div className="col-span-12 md:col-span-8">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Setor Autorizado</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Setor Autorizado</label>
         <div className={getTagContainerClasses(!!errors.authorizedSector)}>
           {getSectorsArray().map((s) => (
             <span
@@ -227,7 +227,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
               <span className="break-words whitespace-normal">{s}</span>
               <button
                 type="button"
-                className="w-6 h-6 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
+                className="w-4 h-4 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
                 onClick={() => handleRemoveSector(s)}
               >
                 <X size={10} />
@@ -247,7 +247,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
 
       {/* Row 4 - Modulos / Permissoes / Add */}
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Módulos</label>
+          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Módulos</label>
         <select
           value={newUser.modules}
           onChange={(e) => setNewUser((p) => ({ ...p, modules: e.target.value }))}
@@ -311,7 +311,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
 
       {/* Modulos autorizados */}
       <div className="col-span-12 md:col-span-8">
-          <label className="text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em] font-semibold">Módulos Autorizados</label>
+          <label className="text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Módulos Autorizados</label>
         <div className={`${getTagContainerClasses(false, 'min-h-[90px] max-h-[120px]')} px-3 py-2`}>
           {getModulesArray().map((m, idx) => (
             <span
@@ -322,7 +322,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
               <button
                 type="button"
                 onClick={() => handleRemoveModule(m)}
-                className="w-6 h-6 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
+                className="w-4 h-4 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
               >
                 <X size={10} />
               </button>
@@ -338,11 +338,11 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
       )}
 
       {/* Footer save */}
-      <div className="p-4 border-t  col-span-12 md:col-span-12 flex justify-center gap-4 items-center">
+      <div className="p-4 border-t border-white/10 col-span-12 md:col-span-12 flex justify-center gap-3 items-center">
         <button
           type="button"
           onClick={onCancel}
-          className="px-5 py-3 rounded-lg bg-transparent border border-white/10 text-white/80 hover:bg-white/5 hover:border-emerald-300/30 focus:outline-none focus:ring-2 focus:ring-emerald-300/10 transition-all text-xs"
+          className="px-4 py-2 rounded-md bg-white/10 border border-white/15 text-white hover:bg-white/15 transition-colors"
           aria-label="Cancelar criação de usuário"
         >
           Cancelar
@@ -351,7 +351,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
         <button
           type="submit"
           disabled={isCreating}
-          className="px-5 py-2 rounded-lg bg-emerald-500 text-white font-bold hover:bg-emerald-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-lg text-sm border border-emerald-300/40 focus:outline-none focus:ring-2 focus:ring-emerald-300/30"
+          className="px-4 py-2 rounded-md bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {isCreating ? 'Criando...' : 'Salvar'}
         </button>
