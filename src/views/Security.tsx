@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { hashPasswordPBKDF2, updatePassword } from '../services/authService'
 import { loadSession } from '../services/sessionService'
-import { getModulesDataForDatabase, MODULE_MAPPING } from '../utils/moduleParser'
+import { getFullModulesPayload, MODULE_MAPPING } from '../utils/moduleParser'
 import UserForm from '../components/UserForm'
 import type { NewUserData } from '../components/UserForm'
 
@@ -341,8 +341,8 @@ const Security: React.FC<SecurityProps> = ({
     try {
       setIsCreating(true)
       setUpdateFeedback(null)
-      // Processa os módulos autorizados para o formato do banco
-      const modulesData = getModulesDataForDatabase(editingUser.authorizedModules)
+      // Processa os módulos autorizados para o formato do banco (preenche null quando removidos)
+      const modulesData = getFullModulesPayload(editingUser.authorizedModules)
       
       const payload = {
         name: editingUser.name.toUpperCase(),
@@ -441,8 +441,8 @@ const Security: React.FC<SecurityProps> = ({
         : await hashPasswordPBKDF2(defaultPassword)
       const insertUrl = new URL(`${supabaseUrl}/rest/v1/user_registration`)
       
-      // Processa os módulos autorizados para o formato do banco
-      const modulesData = getModulesDataForDatabase(newUser.authorizedModules)
+      // Processa os módulos autorizados para o formato do banco (preenche null quando removidos)
+      const modulesData = getFullModulesPayload(newUser.authorizedModules)
       
       const payload = {
         name: newUser.name.toUpperCase(),

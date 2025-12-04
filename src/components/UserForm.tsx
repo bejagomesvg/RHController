@@ -1,5 +1,6 @@
 ﻿import React, { useState } from 'react'
 import { X, PlusCircle, Edit, Trash2, Eye, KeyRound, ChevronsRight } from 'lucide-react'
+import { MODULE_LABELS } from '../utils/moduleParser'
 
 export type NewUserData = {
   name: string
@@ -49,21 +50,7 @@ const AVAILABLE_SECTORS = [
   'VENDAS',
 ]
 
-const AVAILABLE_MODULES = [
-'Avaliação',
-'Banco de Dados',
-'Benefícios',
-'Carga de Tabelas',
-'Comunicação',
-'Desenvolvimento',
-'Escala & Férias',
-'Folha de Pagamento',
-'Infraestrutura',
-'Recrutamento',
-'Saúde e Segurança',
-'Segurança',
-'Treinamento',
-]
+const AVAILABLE_MODULES = MODULE_LABELS
 
 const INITIAL_PERMISSIONS = { creater: false, update: false, delete: false, read: false, password: false }
 
@@ -345,7 +332,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           <div className="flex items-center gap-2 mt-3 w-full">
             {Object.keys(permissoes).map((k) => {
               // Mostrar PASSWORD apenas quando módulo Segurança for selecionado
-              if (k === 'password' && newUser.modules !== 'Segurança') {
+              if (k === 'password' && newUser.modules !== 'SEGURANCA') {
                 return null
               }
               return (
@@ -452,5 +439,4 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
     </form>
   )
 }
-
 
