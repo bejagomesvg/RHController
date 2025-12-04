@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { AlertTriangle, Check, Loader2, LockKeyhole, ShieldCheck, ShieldUser, UserRound, ArrowLeft } from 'lucide-react'
+import { AlertTriangle, Check, Loader2, LockKeyhole, ShieldCheck, ShieldUser, UserRound, ArrowLeft, Table } from 'lucide-react'
 import Dashboard from './views/Dashboard'
 import './style.css'
 import type { UserRegistration } from './models/user'
@@ -15,6 +15,7 @@ import {
 } from './services/authService'
 import { clearSession, loadSession, saveSession } from './services/sessionService'
 import Security from './views/Security'
+import TableLoad from './views/Table_load'
 
 type Mode = 'login' | 'set-password' | 'dashboard' | 'security'
 
@@ -268,7 +269,14 @@ export function App(): ReactElement {
 
   const cardRing = isSetPassword || isDashboard ? 'ring-emerald-200/10' : 'ring-rose-200/10'
   const cardMaxWidth = isDashboard ? 'max-w-5xl' : 'max-w-md'
-  const HeaderIcon = mode === 'security' ? ShieldCheck : ShieldUser
+  const accentIconMap: Record<string, any> = {
+    security: ShieldCheck,
+    table_load: Table,
+  }
+
+  const HeaderIcon = mode === 'security'
+    ? accentIconMap[securityCard?.accent || 'security'] || ShieldCheck
+    : ShieldUser
   const accentColor = securityCard?.accent ?? '#22c55e'
 
   return (
@@ -591,13 +599,23 @@ export function App(): ReactElement {
 
           {mode === 'security' && (
             <div className="space-y-1 -mt-10">
-              <Security
-                onBack={() => setMode('dashboard')}
-                userName={currentUser?.name || currentUser?.username || 'Usuario'}
-                userRole={currentUser?.type_user || 'Perfil nao informado'}
-                title={securityCard?.title}
-                description={securityCard?.description}
-              />
+              {securityCard?.accent === 'table_load' ? (
+                <TableLoad
+                  onBack={() => setMode('dashboard')}
+                  userName={currentUser?.name || currentUser?.username || 'Usuario'}
+                  userRole={currentUser?.type_user || 'Perfil nao informado'}
+                  title={securityCard?.title}
+                  description={securityCard?.description}
+                />
+              ) : (
+                <Security
+                  onBack={() => setMode('dashboard')}
+                  userName={currentUser?.name || currentUser?.username || 'Usuario'}
+                  userRole={currentUser?.type_user || 'Perfil nao informado'}
+                  title={securityCard?.title}
+                  description={securityCard?.description}
+                />
+              )}
             </div>
           )}
 

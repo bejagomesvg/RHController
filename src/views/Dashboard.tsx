@@ -1,4 +1,4 @@
-import React from 'react'
+﻿import React from 'react'
 import {
   Users,
   FileText,
@@ -92,44 +92,46 @@ const Dashboard: React.FC<DashboardProps> = ({
     },
   ]
 
-  const techCards = [
-    {
-      key: 'infrastructure' as const,
-      title: 'Infraestrutura',
-      description: 'Monitoramento de servidores e redes',
-      icon: <Server className="w-5 h-5 text-white" />,
-      color: 'bg-gradient-to-br from-cyan-500 to-blue-600',
-    },
-    {
-      key: 'security' as const,
-      title: 'Segurança',
-      description: 'Controle de acesso e firewall',
-      icon: <ShieldCheck className="w-5 h-5 text-white" />,
-      accent: '#22c55e',
-      color: 'bg-gradient-to-br from-emerald-400 to-green-600',
-    },
-    {
-      key: 'development' as const,
-      title: 'Desenvolvimento',
-      description: 'Repositórios e code review',
-      icon: <Code2 className="w-5 h-5 text-white" />,
-      color: 'bg-gradient-to-br from-violet-500 to-fuchsia-600',
-    },
-    {
-      key: 'database' as const,
-      title: 'Banco de Dados',
-      description: 'Gestão de dados e backups',
-      icon: <Database className="w-5 h-5 text-white" />,
-      color: 'bg-gradient-to-br from-blue-400 to-indigo-500',
-    },
-    {
-      key: 'table_load' as const,
-      title: 'Carga de Tabelas',
-      description: 'Importação massiva e ETL',
-      icon: <Table className="w-5 h-5 text-white" />,
-      color: 'bg-gradient-to-br from-slate-500 to-gray-700',
-    },
-  ]
+    const techCards = [
+  {
+    key: 'infrastructure' as const,
+    title: 'Infraestrutura',
+    description: 'Redes, servidores e cloud',
+    icon: <Server className="w-5 h-5 text-white" />,
+    accent: '#3b82f6',
+    color: 'bg-gradient-to-br from-cyan-500 to-blue-600',
+  },
+  {
+    key: 'security' as const,
+    title: 'Segurança',
+    description: 'Controle de acesso e firewall',
+    icon: <ShieldCheck className="w-5 h-5 text-white" />,
+    accent: '#22c55e',
+    color: 'bg-gradient-to-br from-emerald-400 to-green-600',
+  },
+  {
+    key: 'development' as const,
+    title: 'Desenvolvimento',
+    description: 'Repositórios e code review',
+    icon: <Code2 className="w-5 h-5 text-white" />,
+    color: 'bg-gradient-to-br from-violet-500 to-fuchsia-600',
+  },
+  {
+    key: 'database' as const,
+    title: 'Banco de Dados',
+    description: 'Gestão de dados e backups',
+    icon: <Database className="w-5 h-5 text-white" />,
+    color: 'bg-gradient-to-br from-blue-400 to-indigo-500',
+  },
+  {
+    key: 'table_load' as const,
+    title: 'Carga de Tabelas',
+    description: 'Importação massiva e ETL',
+    icon: <Table className="w-5 h-5 text-white" />,
+    color: 'bg-gradient-to-br from-slate-500 to-gray-700',
+    onClick: () => onOpenSecurity?.({ title: 'Carga de Tabelas', description: 'Importação massiva e ETL', accent: 'table_load' }),
+  },
+]
 
   const isAllowed = (key: ModuleKey) => !allowedModules || Boolean(allowedModules[key])
 
@@ -205,14 +207,16 @@ const Dashboard: React.FC<DashboardProps> = ({
               key={card.title}
               className={`${card.color} w-full rounded-md p-2 shadow-md shadow-black/30 transform hover:-translate-y-1 hover:shadow-2xl transition-all duration-300 cursor-pointer group`}
               onClick={
-                card.key === 'security'
-                  ? () =>
-                      onOpenSecurity?.({
-                        title: card.title,
-                        description: card.description,
-                        accent: card.accent,
-                      })
-                  : undefined
+                card.onClick
+                  ? card.onClick
+                  : card.key === 'security'
+                    ? () =>
+                        onOpenSecurity?.({
+                          title: card.title,
+                          description: card.description,
+                          accent: card.accent,
+                        })
+                    : undefined
               }
             >
               <div className="flex items-start gap-3">
@@ -234,3 +238,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 }
 
 export default Dashboard
+
+
+
+
+

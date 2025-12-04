@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+﻿import React, { useState } from 'react'
 import { X, PlusCircle, Edit, Trash2, Eye, KeyRound, ChevronsRight } from 'lucide-react'
 
 export type NewUserData = {
@@ -92,6 +92,10 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
     
     // Remover espaços ao salvar
     setNewUser((p) => ({ ...p, username: upperValue.replace(/\s/g, '') }))
+  }
+
+  const clearFieldError = (field: keyof typeof validationErrors) => {
+    setValidationErrors((prev) => ({ ...prev, [field]: false }))
   }
 
   const getInputClasses = (hasError: boolean, readOnly: boolean = false) => `
@@ -208,10 +212,10 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           name="name"
           placeholder="Entre com o nome completo"
           value={newUser.name}
-          onChange={(e) => !readonly && setNewUser((p) => ({ ...p, name: e.target.value }))}
+          onChange={(e) => !readonly && setNewUser((p) => ({ ...p, name: e.target.value.toUpperCase() }))}
           className={getInputClasses(validationErrors.name)}
           readOnly={readonly}
-          required
+          onFocus={() => clearFieldError('name')}
         />
         {validationErrors.name && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
@@ -226,7 +230,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           onChange={(e) => !readonly && handleUsernameChange(e.target.value)}
           className={getInputClasses(validationErrors.username || !!usernameError)}
           readOnly={readonly}
-          required
+          onFocus={() => clearFieldError('username')}
         />
         {validationErrors.username && !usernameError && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
         {usernameError && <span className="text-red-300 text-xs mt-1 block">{usernameError}</span>}
@@ -243,6 +247,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           onChange={(e) => !readonly && setNewUser((p) => ({ ...p, job_title: e.target.value.toUpperCase() }))}
           className={getInputClasses(validationErrors.job_title)}
           readOnly={readonly}
+          onFocus={() => clearFieldError('job_title')}
         />
         {validationErrors.job_title && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
@@ -254,12 +259,14 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           onChange={(e) => !readonly && setNewUser((p) => ({ ...p, type_user: e.target.value }))}
           className={getInputClasses(validationErrors.type_user)}
           disabled={readonly}
+          onFocus={() => clearFieldError('type_user')}
         >
-          <option value="Usuario">USUARIO</option>
-          <option value="Administrador">ADMINISTRADOR</option>
-          <option value="Gerente">GERENTE</option>
+          <option value="" className="bg-[#202422] text-white border-0 outline-none">--</option>
+          <option value="USUARIO" className="bg-[#202422] text-white border-0 outline-none">USUARIO</option>
+          <option value="ADMINISTRADOR" className="bg-[#202422] text-white border-0 outline-none">ADMINISTRADOR</option>
+          <option value="GERENTE" className="bg-[#202422] text-white border-0 outline-none">GERENTE</option>
         </select>
-        {validationErrors.type_user && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
+        {validationErrors.type_user && <span className="text-orange-400 text-xs mt-1 block">? Usuário não disponivel</span>}
       </div>
       <div className="col-span-12 md:col-span-3">
           <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Data de Registro</label>
@@ -276,10 +283,11 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
             handleSectorChange(e.target.value)
             setSectorSelection('')
           }}
+          onFocus={() => clearFieldError('authorizedSector')}
           disabled={hasAllSectors() || readonly}
           className={getInputClasses(false)}
         >
-          <option value="">--</option>
+          <option value="" className="bg-[#202422] text-white">--</option>
           <option value="TODOS" className="bg-[#202422] text-white">
             TODOS
           </option>
@@ -323,6 +331,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           onChange={(e) => !readonly && setNewUser((p) => ({ ...p, modules: e.target.value }))}
           className={`${getInputClasses(false)} border-transparent border-b-2 focus:border-emerald-400/90`}
           disabled={readonly}
+          onFocus={() => clearFieldError('authorizedModules')}
         >
           <option value="">--</option>
           {getFilteredModules().map((m) => (
@@ -412,8 +421,10 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
       </div>
 
       {createFeedback && (
-        <div className="col-span-12 md:col-span-6 text-sm text-amber-200 bg-amber-500/10 border border-amber-300/40 rounded-md px-3 py-2">
-          {createFeedback}
+        <div className="col-span-12 flex justify-center">
+          <div className="text-sm text-amber-200 bg-amber-500/10 border border-amber-300/40 rounded-md px-4 py-2 min-w-[320px] text-center">
+            {createFeedback}
+          </div>
         </div>
       )}
 
@@ -441,3 +452,5 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
     </form>
   )
 }
+
+

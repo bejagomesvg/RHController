@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+﻿import React, { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -78,6 +78,7 @@ const Security: React.FC<SecurityProps> = ({
   const [confirmDelete, setConfirmDelete] = useState<UserRow | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [createFeedback, setCreateFeedback] = useState<string | null>(null)
+  const [updateFeedback, setUpdateFeedback] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
   const [showViewEdit, setShowViewEdit] = useState(false)
   const [viewEditMode, setViewEditMode] = useState<'view' | 'edit'>('view')
@@ -87,7 +88,7 @@ const Security: React.FC<SecurityProps> = ({
   const [newUser, setNewUser] = useState({
     name: '',
     username: '',
-    type_user: 'Usuario',
+    type_user: '',
     job_title: '',
     allowed_sector: '',
     date_registration: todayIso,
@@ -258,7 +259,7 @@ const Security: React.FC<SecurityProps> = ({
     const userData: NewUserData = {
       name: user.name || '',
       username: user.username || '',
-      type_user: user.type_user || 'Usuario',
+      type_user: (user.type_user || 'USUARIO').toUpperCase(),
       job_title: user.job_title || '',
       allowed_sector: user.allowed_sector || '',
       date_registration: todayIso,
@@ -271,6 +272,7 @@ const Security: React.FC<SecurityProps> = ({
     setEditingUser(userData)
     setEditingUserId(user.id)
     setViewEditMode('view')
+    setUpdateFeedback(null)
     setShowViewEdit(true)
   }
 
@@ -293,7 +295,7 @@ const Security: React.FC<SecurityProps> = ({
     const userData: NewUserData = {
       name: user.name || '',
       username: user.username || '',
-      type_user: user.type_user || 'Usuario',
+      type_user: (user.type_user || 'USUARIO').toUpperCase(),
       job_title: user.job_title || '',
       allowed_sector: user.allowed_sector || '',
       date_registration: todayIso,
@@ -306,6 +308,7 @@ const Security: React.FC<SecurityProps> = ({
     setEditingUser(userData)
     setEditingUserId(user.id)
     setViewEditMode('edit')
+    setUpdateFeedback(null)
     setShowViewEdit(true)
   }
 
@@ -337,11 +340,13 @@ const Security: React.FC<SecurityProps> = ({
     
     try {
       setIsCreating(true)
+      setUpdateFeedback(null)
       // Processa os módulos autorizados para o formato do banco
       const modulesData = getModulesDataForDatabase(editingUser.authorizedModules)
       
       const payload = {
         name: editingUser.name.toUpperCase(),
+        username: (editingUser.username || '').trim().toUpperCase(),
         type_user: editingUser.type_user.toUpperCase(),
         is_authorized: editingUser.is_authorized,
         job_title: editingUser.job_title.toUpperCase(),
@@ -376,9 +381,10 @@ const Security: React.FC<SecurityProps> = ({
       )
       setShowViewEdit(false)
       setEditingUserId(null)
+      setUpdateFeedback(null)
     } catch (error) {
       console.error('Erro ao atualizar usuario:', error)
-      alert('Nao foi possivel atualizar o usuario.')
+      setUpdateFeedback('⚠ Usuário não disponivel')
     } finally {
       setIsCreating(false)
     }
@@ -429,6 +435,7 @@ const Security: React.FC<SecurityProps> = ({
     }
     try {
       setIsCreating(true)
+      setUpdateFeedback(null)
       const hashed = defaultPassword.startsWith('pbkdf2:')
         ? defaultPassword
         : await hashPasswordPBKDF2(defaultPassword)
@@ -467,7 +474,7 @@ const Security: React.FC<SecurityProps> = ({
       setNewUser({
         name: '',
         username: '',
-        type_user: 'Usuario',
+        type_user: '',
         job_title: '',
         allowed_sector: '',
         date_registration: todayIso,
@@ -481,7 +488,7 @@ const Security: React.FC<SecurityProps> = ({
       window.localStorage.removeItem('rh_showCreate')
     } catch (error) {
       console.error('Erro ao criar usuario:', error)
-      setCreateFeedback('Nao foi possivel criar o usuario.')
+      setCreateFeedback('⚠ Usuário não disponivel')
     } finally {
       setIsCreating(false)
     }
@@ -558,7 +565,10 @@ const Security: React.FC<SecurityProps> = ({
                 {viewEditMode === 'view' ? 'Visualizar Usuário' : 'Editar Usuário'}
               </h2>
               <button
-                onClick={() => setShowViewEdit(false)}
+                onClick={() => {
+                  setShowViewEdit(false)
+                  setUpdateFeedback(null)
+                }}
                 className="text-white/60 hover:text-white transition-colors"
               >
                 <X className="w-6 h-6" />
@@ -570,8 +580,11 @@ const Security: React.FC<SecurityProps> = ({
                 newUser={editingUser}
                 setNewUser={setEditingUser}
                 isCreating={isCreating}
-                createFeedback={null}
-                onCancel={() => setShowViewEdit(false)}
+                createFeedback={updateFeedback}
+                onCancel={() => {
+                  setShowViewEdit(false)
+                  setUpdateFeedback(null)
+                }}
                 onSubmit={viewEditMode === 'edit' ? handleUpdateUser : (e) => e.preventDefault()}
                 readonly={viewEditMode === 'view'}
               />
@@ -835,4 +848,7 @@ const Security: React.FC<SecurityProps> = ({
 }
 
 export default Security
+
+
+
 
