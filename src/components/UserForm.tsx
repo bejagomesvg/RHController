@@ -22,6 +22,7 @@ interface Props {
   createFeedback: string | null
   onCancel: () => void
   onSubmit: (e: React.FormEvent) => void
+  readonly?: boolean
 }
 
 const AVAILABLE_SECTORS = [
@@ -48,34 +49,74 @@ const AVAILABLE_SECTORS = [
   'VENDAS',
 ]
 
-const AVAILABLE_MODULES = ['MODULOS 1', 'MODULOS 2', 'MODULOS 3', 'MODULOS 4', 'MODULOS 5']
+const AVAILABLE_MODULES = [
+'Avaliação',
+'Banco de Dados',
+'Benefícios',
+'Carga de Tabelas',
+'Comunicação',
+'Desenvolvimento',
+'Escala & Férias',
+'Folha de Pagamento',
+'Infraestrutura',
+'Recrutamento',
+'Saúde e Segurança',
+'Segurança',
+'Treinamento',
+]
+
 const INITIAL_PERMISSIONS = { creater: false, update: false, delete: false, read: false, password: false }
 
-export default function UserForm({ newUser, setNewUser, isCreating, createFeedback, onCancel, onSubmit }: Props) {
-  const [errors, setErrors] = useState<Record<string, string | undefined>>({})
-  const [tagInputValue, setTagInputValue] = useState('')
+export default function UserForm({ newUser, setNewUser, isCreating, createFeedback, onCancel, onSubmit, readonly = false }: Props) {
   const [permissoes, setPermissoes] = useState(INITIAL_PERMISSIONS)
   const [sectorSelection, setSectorSelection] = useState('')
+  const [usernameError, setUsernameError] = useState('')
+
+  const handleUsernameChange = (value: string) => {
+    const upperValue = value.toUpperCase()
+    
+    // Verificar se há espaços
+    if (upperValue.includes(' ')) {
+      setUsernameError('Username não pode conter espaços. Use apenas letras, números e caracteres especiais como _ ou -')
+    } else {
+      setUsernameError('')
+    }
+    
+    // Remover espaços ao salvar
+    setNewUser((p) => ({ ...p, username: upperValue.replace(/\s/g, '') }))
+  }
 
   const getInputClasses = (hasError: boolean, readOnly: boolean = false) => `
     w-full bg-white/5 text-white text-[13px] leading-tight border border-white/10
     ${hasError ? 'border-red-400' : ''}
-    ${readOnly ? 'opacity-60 cursor-not-allowed' : 'focus:border-emerald-400 focus:bg-emerald-400/6'}
+    ${readOnly || readonly ? 'opacity-60 cursor-not-allowed' : 'focus:border-emerald-400 focus:bg-emerald-400/6'}
     outline-none transition-colors duration-200 px-4 py-2 rounded-lg uppercase placeholder:tracking-widest placeholder:text-white/40
   `
 
   const getTagContainerClasses = (hasError: boolean, height: string = 'min-h-[70px] max-h-[70px]') => `
-    w-full bg-white/4 border border-white/8
-    ${hasError ? 'border-red-300' : ''}
-    transition-colors duration-200 px-2 py-2 rounded-md ${height} overflow-y-auto
-    flex content-start items-start gap-2 flex-wrap
+    w-full bg-white/5 text-white text-[13px] leading-tight border border-white/10
+    ${hasError ? 'border-red-400' : ''}
+    outline-none transition-colors duration-200 px-4 py-2 rounded-lg ${height}
+    overflow-y-auto flex content-start items-start gap-2 flex-wrap
   `
 
   const getSectorsArray = () =>
-    newUser.authorizedSector ? newUser.authorizedSector.split(',').map((s) => s.trim()).filter(Boolean) : []
+    newUser.authorizedSector
+      ? newUser.authorizedSector
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .sort()
+      : []
 
   const getModulesArray = () =>
-    newUser.authorizedModules ? newUser.authorizedModules.split('\n').map((s) => s.trim()).filter(Boolean) : []
+    newUser.authorizedModules
+      ? newUser.authorizedModules
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .sort()
+      : []
 
   const getFilteredSectors = () => {
     const current = getSectorsArray()
@@ -89,6 +130,13 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
 
   const handleSectorChange = (value: string) => {
     if (!value) return
+    
+    // Se "TODOS" foi selecionado, deixa apenas ele
+    if (value === 'TODOS') {
+      setNewUser((p) => ({ ...p, authorizedSector: 'TODOS' }))
+      return
+    }
+    
     const current = getSectorsArray()
     if (current.includes(value)) return
     const next = [...current, value]
@@ -100,23 +148,9 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
     setNewUser((p) => ({ ...p, authorizedSector: current.filter((s) => s !== sectorToRemove).join(',') }))
   }
 
-  const handleTagInputKeyDown = () => {
-    const val = tagInputValue.trim().toUpperCase()
-    if (!val) return
-    if (!AVAILABLE_SECTORS.includes(val)) {
-      setErrors((p) => ({ ...p, authorizedSector: 'Setor inválido ou inexistente.' }))
-      setTagInputValue('')
-      return
-    }
-    const current = getSectorsArray()
-    if (current.includes(val)) {
-      setErrors((p) => ({ ...p, authorizedSector: 'Setor já adicionado.' }))
-      setTagInputValue('')
-      return
-    }
-    setNewUser((p) => ({ ...p, authorizedSector: [...current, val].join(',') }))
-    setTagInputValue('')
-    setErrors((p) => ({ ...p, authorizedSector: undefined }))
+  const hasAllSectors = () => {
+    const sectors = getSectorsArray()
+    return sectors.includes('TODOS')
   }
 
   const handleAddModule = () => {
@@ -145,11 +179,11 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           name="name"
           placeholder="DIGITE O NOME COMPLETO"
           value={newUser.name}
-          onChange={(e) => setNewUser((p) => ({ ...p, name: e.target.value }))}
-          className={getInputClasses(!!errors.name)}
+          onChange={(e) => !readonly && setNewUser((p) => ({ ...p, name: e.target.value }))}
+          className={getInputClasses(false)}
+          readOnly={readonly}
           required
         />
-        {errors.name && <span className="text-red-300 text-xs mt-1 block">{errors.name}</span>}
       </div>
 
       <div className="col-span-12 md:col-span-4">
@@ -159,11 +193,12 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           name="username"
           placeholder="NOME DE USUÁRIO"
           value={newUser.username}
-          onChange={(e) => setNewUser((p) => ({ ...p, username: e.target.value.toUpperCase() }))}
-          className={getInputClasses(!!errors.username)}
+          onChange={(e) => !readonly && handleUsernameChange(e.target.value)}
+          className={getInputClasses(!!usernameError)}
+          readOnly={readonly}
           required
         />
-        {errors.username && <span className="text-red-300 text-xs mt-1 block">{errors.username}</span>}
+        {usernameError && <span className="text-red-300 text-xs mt-1 block">{usernameError}</span>}
       </div>
 
       {/* Row 2 - Cargo / Perfil / Data */}
@@ -174,8 +209,9 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           name="job_title"
           placeholder="CARGO DO USUÁRIO"
           value={newUser.job_title}
-          onChange={(e) => setNewUser((p) => ({ ...p, job_title: e.target.value.toUpperCase() }))}
+          onChange={(e) => !readonly && setNewUser((p) => ({ ...p, job_title: e.target.value.toUpperCase() }))}
           className={getInputClasses(false)}
+          readOnly={readonly}
         />
       </div>
       <div className="col-span-12 md:col-span-4">
@@ -183,8 +219,9 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
         <select
           name="type_user"
           value={newUser.type_user}
-          onChange={(e) => setNewUser((p) => ({ ...p, type_user: e.target.value }))}
+          onChange={(e) => !readonly && setNewUser((p) => ({ ...p, type_user: e.target.value }))}
           className={getInputClasses(false)}
+          disabled={readonly}
         >
           <option value="Usuario">USUARIO</option>
           <option value="Administrador">ADMINISTRADOR</option>
@@ -205,9 +242,13 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
             handleSectorChange(e.target.value)
             setSectorSelection('')
           }}
+          disabled={hasAllSectors() || readonly}
           className={getInputClasses(false)}
         >
           <option value="">--</option>
+          <option value="TODOS" className="bg-[#202422] text-white">
+            TODOS
+          </option>
           {getFilteredSectors().map((s) => (
             <option key={s} value={s} className="bg-[#202422] text-white">
               {s}
@@ -218,30 +259,24 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
 
       <div className="col-span-12 md:col-span-8">
           <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Setor Autorizado</label>
-        <div className={getTagContainerClasses(!!errors.authorizedSector)}>
+        <div className={getTagContainerClasses(false, 'min-h-[45px] max-h-[79px]')}>
           {getSectorsArray().map((s) => (
             <span
               key={s}
-              className="inline-flex items-start gap-2 bg-[#342e4a] text-white text-[12px] px-2 py-1 rounded-md border border-[#4b3d66] uppercase tracking-wider max-w-full break-words whitespace-normal"
+              className="inline-flex items-start gap-2 bg-[#342e4a] text-white text-[11px] px-2 py-1 rounded-md border border-[#50406a] uppercase tracking-wider max-w-full break-words whitespace-normal"
             >
               <span className="break-words whitespace-normal">{s}</span>
-              <button
-                type="button"
-                className="w-4 h-4 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
-                onClick={() => handleRemoveSector(s)}
-              >
-                <X size={10} />
-              </button>
+              {!readonly && (
+                <button
+                  type="button"
+                  className="w-4 h-4 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
+                  onClick={() => handleRemoveSector(s)}
+                >
+                  <X size={10} />
+                </button>
+              )}
             </span>
           ))}
-          <input
-            type="text"
-            value={tagInputValue}
-            onChange={(e) => setTagInputValue(e.target.value.toUpperCase())}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ',' ? (e.preventDefault(), handleTagInputKeyDown()) : null)}
-            className="bg-transparent border-none outline-none text-white text-[13px] leading-tight uppercase flex-grow min-w-[100px] placeholder:text-white/40 px-3 py-2"
-          />
-          {errors.authorizedSector && <span className="text-red-300 text-xs mt-1 block">{errors.authorizedSector}</span>}
         </div>
       </div>
 
@@ -250,8 +285,9 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Módulos</label>
         <select
           value={newUser.modules}
-          onChange={(e) => setNewUser((p) => ({ ...p, modules: e.target.value }))}
+          onChange={(e) => !readonly && setNewUser((p) => ({ ...p, modules: e.target.value }))}
           className={`${getInputClasses(false)} border-transparent border-b-2 focus:border-emerald-400/90`}
+          disabled={readonly}
         >
           <option value="">--</option>
           {getFilteredModules().map((m) => (
@@ -261,9 +297,14 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           ))}
         </select>
 
-        {newUser.modules && (
+        {newUser.modules && !readonly && (
           <div className="flex items-center gap-2 mt-3 w-full">
-            {Object.keys(permissoes).map((k) => (
+            {Object.keys(permissoes).map((k) => {
+              // Mostrar PASSWORD apenas quando módulo Segurança for selecionado
+              if (k === 'password' && newUser.modules !== 'Segurança') {
+                return null
+              }
+              return (
               <label key={k} className="cursor-pointer flex items-center gap-1.5" title={k.toUpperCase()}>
                 <input
                   type="checkbox"
@@ -295,7 +336,8 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
                   {k === 'password' ? <KeyRound size={18} className={`${(permissoes as any)[k] ? 'text-violet-300' : 'text-white/60'}`} /> : null}
                 </div>
               </label>
-            ))}
+            )
+            })}
 
             <button
               type="button"
@@ -312,20 +354,22 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
       {/* Modulos autorizados */}
       <div className="col-span-12 md:col-span-8">
           <label className="text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Módulos Autorizados</label>
-        <div className={`${getTagContainerClasses(false, 'min-h-[90px] max-h-[120px]')} px-3 py-2`}>
+        <div className={getTagContainerClasses(false, 'min-h-[45px] max-h-[113px]')}>
           {getModulesArray().map((m, idx) => (
             <span
               key={idx}
               className="inline-flex items-start gap-2 bg-[#342e4a] text-white text-[11px] px-2 py-1 rounded-md border border-[#50406a] uppercase tracking-wider max-w-full break-words whitespace-normal"
             >
               <span className="break-words whitespace-normal">{m}</span>
-              <button
-                type="button"
-                onClick={() => handleRemoveModule(m)}
-                className="w-4 h-4 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
-              >
-                <X size={10} />
-              </button>
+              {!readonly && (
+                <button
+                  type="button"
+                  onClick={() => handleRemoveModule(m)}
+                  className="w-4 h-4 flex items-center justify-center rounded-md bg-white/5 text-white/80 hover:bg-rose-500/40 ml-1"
+                >
+                  <X size={10} />
+                </button>
+              )}
             </span>
           ))}
         </div>
@@ -348,13 +392,15 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           Cancelar
         </button>
 
-        <button
-          type="submit"
-          disabled={isCreating}
-          className="px-4 py-2 rounded-md bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          {isCreating ? 'Criando...' : 'Salvar'}
-        </button>
+        {!readonly && (
+          <button
+            type="submit"
+            disabled={isCreating}
+            className="px-4 py-2 rounded-md bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isCreating ? 'Criando...' : 'Salvar'}
+          </button>
+        )}
       </div>
     </form>
   )

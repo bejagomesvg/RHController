@@ -5,9 +5,9 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
+  Eye,
   KeyRound,
   Pencil,
-  RotateCw,
   Search,
   Trash2,
   UserPlus,
@@ -15,7 +15,9 @@ import {
 } from 'lucide-react'
 import { hashPasswordPBKDF2, updatePassword } from '../services/authService'
 import { loadSession } from '../services/sessionService'
+import { getModulesDataForDatabase, MODULE_MAPPING } from '../utils/moduleParser'
 import UserForm from '../components/UserForm'
+import type { NewUserData } from '../components/UserForm'
 
 type SortKey = 'name' | 'type_user' | 'status' | 'role' | 'sector'
 
@@ -77,6 +79,9 @@ const Security: React.FC<SecurityProps> = ({
   const [showCreate, setShowCreate] = useState(false)
   const [createFeedback, setCreateFeedback] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
+  const [showViewEdit, setShowViewEdit] = useState(false)
+  const [viewEditMode, setViewEditMode] = useState<'view' | 'edit'>('view')
+  const [editingUserId, setEditingUserId] = useState<number | null>(null)
   const todayIso = useMemo(() => new Date().toISOString().split('T')[0], [])
   // previously had sectorOptions / sectorSelection here — not used by this view anymore
   const [newUser, setNewUser] = useState({
@@ -92,12 +97,40 @@ const Security: React.FC<SecurityProps> = ({
     authorizedModules: '',
     security: [] as string[],
   })
+
+  // Estado separado para edição do usuário
+  const [editingUser, setEditingUser] = useState<NewUserData>({
+    name: '',
+    username: '',
+    type_user: 'Usuario',
+    job_title: '',
+    allowed_sector: '',
+    date_registration: '',
+    is_authorized: true,
+    authorizedSector: '',
+    modules: '',
+    authorizedModules: '',
+    security: [] as string[],
+  })
+
+  // Recupera o estado de showCreate do localStorage
+  useEffect(() => {
+    const storedShowCreate = window.localStorage.getItem('rh_showCreate') === 'true'
+    if (storedShowCreate) {
+      setShowCreate(true)
+    }
+  }, [])
+
+  // Salva o estado de showCreate no localStorage
+  useEffect(() => {
+    window.localStorage.setItem('rh_showCreate', showCreate.toString())
+  }, [showCreate])
   useEffect(() => {
     const fetchUsers = async () => {
       if (!supabaseUrl || !supabaseKey) return
       try {
         const url = new URL(`${supabaseUrl}/rest/v1/user_registration`)
-        url.searchParams.set('select', 'id,name,username,type_user,is_authorized,job_title,allowed_sector,security')
+        url.searchParams.set('select', 'id,name,username,type_user,is_authorized,job_title,allowed_sector,security,evaluation,database,benefits,table_load,communication,development,shift_schedule_and_vacation,payroll,infrastructure,recruitment,health_and_safety,security,training')
         url.searchParams.set('order', 'name.asc')
 
         const response = await fetch(url.toString(), {
@@ -206,6 +239,151 @@ const Security: React.FC<SecurityProps> = ({
     }
   }
 
+  const handleViewUser = (user: UserRow) => {
+    // Reconstrói os módulos autorizados a partir dos dados do usuário
+    const authorizedModulesArray: string[] = []
+    const moduleColumns = Object.entries(MODULE_MAPPING).map(([, dbName]) => dbName)
+    
+    moduleColumns.forEach((dbColumnName) => {
+      const permissions = (user as any)[dbColumnName]
+      if (permissions) {
+        // Encontra o nome português do módulo
+        const moduleName = Object.entries(MODULE_MAPPING).find(([, db]) => db === dbColumnName)?.[0]
+        if (moduleName) {
+          authorizedModulesArray.push(`${moduleName} (${permissions})`)
+        }
+      }
+    })
+    
+    const userData: NewUserData = {
+      name: user.name || '',
+      username: user.username || '',
+      type_user: user.type_user || 'Usuario',
+      job_title: user.job_title || '',
+      allowed_sector: user.allowed_sector || '',
+      date_registration: todayIso,
+      is_authorized: user.is_authorized,
+      authorizedSector: user.allowed_sector || '',
+      modules: '',
+      authorizedModules: authorizedModulesArray.join('\n'),
+      security: user.security ? user.security.split(',').map(s => s.trim()) : [],
+    }
+    setEditingUser(userData)
+    setEditingUserId(user.id)
+    setViewEditMode('view')
+    setShowViewEdit(true)
+  }
+
+  const handleEditUser = (user: UserRow) => {
+    // Reconstrói os módulos autorizados a partir dos dados do usuário
+    const authorizedModulesArray: string[] = []
+    const moduleColumns = Object.entries(MODULE_MAPPING).map(([, dbName]) => dbName)
+    
+    moduleColumns.forEach((dbColumnName) => {
+      const permissions = (user as any)[dbColumnName]
+      if (permissions) {
+        // Encontra o nome português do módulo
+        const moduleName = Object.entries(MODULE_MAPPING).find(([, db]) => db === dbColumnName)?.[0]
+        if (moduleName) {
+          authorizedModulesArray.push(`${moduleName} (${permissions})`)
+        }
+      }
+    })
+    
+    const userData: NewUserData = {
+      name: user.name || '',
+      username: user.username || '',
+      type_user: user.type_user || 'Usuario',
+      job_title: user.job_title || '',
+      allowed_sector: user.allowed_sector || '',
+      date_registration: todayIso,
+      is_authorized: user.is_authorized,
+      authorizedSector: user.allowed_sector || '',
+      modules: '',
+      authorizedModules: authorizedModulesArray.join('\n'),
+      security: user.security ? user.security.split(',').map(s => s.trim()) : [],
+    }
+    setEditingUser(userData)
+    setEditingUserId(user.id)
+    setViewEditMode('edit')
+    setShowViewEdit(true)
+  }
+
+  const handleUpdateUser = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!supabaseUrl || !supabaseKey || !editingUserId) return
+    
+    // Validação de campos obrigatórios
+    if (!editingUser.name?.trim()) {
+      alert('NOME COMPLETO é obrigatório.')
+      return
+    }
+    if (!editingUser.job_title?.trim()) {
+      alert('CARGO é obrigatório.')
+      return
+    }
+    if (!editingUser.type_user?.trim()) {
+      alert('PERFIL é obrigatório.')
+      return
+    }
+    if (!editingUser.authorizedSector?.trim()) {
+      alert('SETOR AUTORIZADO é obrigatório.')
+      return
+    }
+    if (!editingUser.authorizedModules?.trim()) {
+      alert('MODULOS AUTORIZADOS é obrigatório.')
+      return
+    }
+    
+    try {
+      setIsCreating(true)
+      // Processa os módulos autorizados para o formato do banco
+      const modulesData = getModulesDataForDatabase(editingUser.authorizedModules)
+      
+      const payload = {
+        name: editingUser.name.toUpperCase(),
+        type_user: editingUser.type_user.toUpperCase(),
+        is_authorized: editingUser.is_authorized,
+        job_title: editingUser.job_title.toUpperCase(),
+        allowed_sector: editingUser.authorizedSector === 'TODOS' ? 'TODOS' : editingUser.authorizedSector,
+        security: editingUser.security.join(','),
+        ...modulesData,
+      }
+      
+      const updateUrl = new URL(`${supabaseUrl}/rest/v1/user_registration`)
+      updateUrl.searchParams.set('id', `eq.${editingUserId}`)
+      
+      const response = await fetch(updateUrl.toString(), {
+        method: 'PATCH',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify(payload),
+      })
+      if (!response.ok) throw new Error(`Supabase update ${response.status}`)
+      
+      const [updated] = (await response.json()) as UserRow[]
+      // Atualiza a lista de usuários
+      setUsersData((prev) =>
+        prev.map((u) =>
+          u.id === editingUserId
+            ? { ...updated, role: updated.job_title, sector: updated.allowed_sector }
+            : u,
+        ),
+      )
+      setShowViewEdit(false)
+      setEditingUserId(null)
+    } catch (error) {
+      console.error('Erro ao atualizar usuario:', error)
+      alert('Nao foi possivel atualizar o usuario.')
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
   const handleCreateSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
     setCreateFeedback(null)
@@ -215,6 +393,34 @@ const Security: React.FC<SecurityProps> = ({
     }
     if (!newUser.name || !newUser.username) {
       setCreateFeedback('Preencha nome e usuario.')
+      return
+    }
+    if (!newUser.name?.trim()) {
+      setCreateFeedback('NOME COMPLETO é obrigatório.')
+      return
+    }
+    if (!newUser.username?.trim()) {
+      setCreateFeedback('USUARIO é obrigatório.')
+      return
+    }
+    if (!newUser.job_title?.trim()) {
+      setCreateFeedback('CARGO é obrigatório.')
+      return
+    }
+    if (!newUser.type_user?.trim()) {
+      setCreateFeedback('PERFIL é obrigatório.')
+      return
+    }
+    if (!newUser.authorizedSector?.trim()) {
+      setCreateFeedback('SETOR AUTORIZADO é obrigatório.')
+      return
+    }
+    if (!newUser.authorizedModules?.trim()) {
+      setCreateFeedback('MODULOS AUTORIZADOS é obrigatório.')
+      return
+    }
+    if (newUser.username.includes(' ')) {
+      setCreateFeedback('Username não pode conter espaços. Use apenas letras, números e caracteres especiais como _ ou -')
       return
     }
     if (!defaultPassword) {
@@ -227,15 +433,21 @@ const Security: React.FC<SecurityProps> = ({
         ? defaultPassword
         : await hashPasswordPBKDF2(defaultPassword)
       const insertUrl = new URL(`${supabaseUrl}/rest/v1/user_registration`)
+      
+      // Processa os módulos autorizados para o formato do banco
+      const modulesData = getModulesDataForDatabase(newUser.authorizedModules)
+      
       const payload = {
-        name: newUser.name,
+        name: newUser.name.toUpperCase(),
         username: newUser.username.trim().toUpperCase(),
-        type_user: newUser.type_user,
+        type_user: newUser.type_user.toUpperCase(),
         is_authorized: newUser.is_authorized,
-        job_title: newUser.job_title,
-        allowed_sector: newUser.allowed_sector,
+        job_title: newUser.job_title.toUpperCase(),
+        allowed_sector: newUser.authorizedSector === 'TODOS' ? 'TODOS' : newUser.authorizedSector,
         security: newUser.security.join(','),
         password: hashed,
+        user_creater: sessionUser?.username || '',
+        ...modulesData,
       }
       const response = await fetch(insertUrl.toString(), {
         method: 'POST',
@@ -266,6 +478,7 @@ const Security: React.FC<SecurityProps> = ({
         authorizedModules: '',
       })
       // reset of local sectorSelection no longer needed
+      window.localStorage.removeItem('rh_showCreate')
     } catch (error) {
       console.error('Erro ao criar usuario:', error)
       setCreateFeedback('Nao foi possivel criar o usuario.')
@@ -332,6 +545,36 @@ const Security: React.FC<SecurityProps> = ({
               >
                 {isResettingId === confirmUser.id ? 'Redefinindo...' : 'Confirmar'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showViewEdit && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 overflow-y-auto">
+          <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-7xl p-4 my-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-white text-2xl font-bold">
+                {viewEditMode === 'view' ? 'Visualizar Usuário' : 'Editar Usuário'}
+              </h2>
+              <button
+                onClick={() => setShowViewEdit(false)}
+                className="text-white/60 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="max-h-[70vh] overflow-y-auto">
+              <UserForm
+                newUser={editingUser}
+                setNewUser={setEditingUser}
+                isCreating={isCreating}
+                createFeedback={null}
+                onCancel={() => setShowViewEdit(false)}
+                onSubmit={viewEditMode === 'edit' ? handleUpdateUser : (e) => e.preventDefault()}
+                readonly={viewEditMode === 'view'}
+              />
             </div>
           </div>
         </div>
@@ -419,9 +662,8 @@ const Security: React.FC<SecurityProps> = ({
           </div>
         )}
 
-        {!showCreate ? (
-          <div className="bg-white/5 border border-white/10 rounded-lg p-0 shadow-inner shadow-black/30 overflow-hidden">
-            <div className="h-[400px] overflow-y-auto overflow-x-hidden">
+        <div className="bg-white/5 border border-white/10 rounded-lg p-0 shadow-inner shadow-black/30 overflow-hidden">
+          <div className="h-[400px] overflow-y-auto overflow-x-hidden">
               <table className="table-auto w-full text-left text-sm text-white/80 border-collapse">
                 <thead className="text-white/70 uppercase text-xs bg-slate-900 sticky top-0 z-20">
                   <tr>
@@ -504,11 +746,19 @@ const Security: React.FC<SecurityProps> = ({
                         <div className="flex items-center justify-center gap-0 text-white/80">
                           {canUpdate && (
                             <>
-                              <button className="p-1 rounded hover:bg-white/10 transition-colors" title="Editar">
+                              <button
+                                className="p-1 rounded hover:bg-white/10 transition-colors"
+                                onClick={() => handleEditUser(user)}
+                                title="Editar usuário"
+                              >
                                 <Pencil className="w-4 h-4 text-blue-300" />
                               </button>
-                              <button className="p-1 rounded hover:bg-white/10 transition-colors" title="Atualizar">
-                                <RotateCw className="w-4 h-4 text-emerald-300" />
+                              <button
+                                className="p-1 rounded hover:bg-white/10 transition-colors"
+                                onClick={() => handleViewUser(user)}
+                                title="Visualizar detalhes"
+                              >
+                                <Eye className="w-4 h-4 text-emerald-300" />
                               </button>
                             </>
                           )}
@@ -543,40 +793,46 @@ const Security: React.FC<SecurityProps> = ({
               </table>
             </div>
           </div>
-        ) : (
-          <div className="bg-white/5 border border-white/10 rounded-lg p-4 shadow-inner shadow-black/30">
-            <div className="-mx-4 -mt-4 px-4 py-2 bg-slate-900 rounded-t-lg border-b border-white/10 flex items-center justify-between">
-              <span className="text-white font-semibold text-sm mx-auto uppercase text-center w-full">
-                FICHA DE USUARIO - CADASTROS
-              </span>
+
+      {showCreate && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 overflow-y-auto">
+          <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-7xl p-4 my-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-white text-2xl font-bold">
+                Criar Usuário
+              </h2>
               <button
-                type="button"
-                className="p-2 rounded-md bg-white/5 border border-white/10 text-white/80 hover:bg-rose-500/20 hover:border-rose-400/60 hover:text-rose-200 transition-colors"
-                title="Fechar ficha"
                 onClick={() => {
                   setShowCreate(false)
                   setCreateFeedback(null)
                 }}
+                className="text-white/60 hover:text-white transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-6 h-6" />
               </button>
             </div>
-            <UserForm
-              newUser={newUser}
-              setNewUser={setNewUser}
-              isCreating={isCreating}
-              createFeedback={createFeedback}
-              onCancel={() => {
-                setShowCreate(false)
-                setCreateFeedback(null)
-              }}
-              onSubmit={handleCreateSubmit}
-            />
+            
+            <div className="max-h-[70vh] overflow-y-auto">
+              <UserForm
+                newUser={newUser}
+                setNewUser={setNewUser}
+                isCreating={isCreating}
+                createFeedback={createFeedback}
+                onCancel={() => {
+                  setShowCreate(false)
+                  setCreateFeedback(null)
+                  window.localStorage.removeItem('rh_showCreate')
+                }}
+                onSubmit={handleCreateSubmit}
+              />
+            </div>
           </div>
-        )}
+        </div>
+      )}
       </div>
     </div>
   )
 }
 
 export default Security
+

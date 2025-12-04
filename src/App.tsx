@@ -248,7 +248,7 @@ export function App(): ReactElement {
     }
   }, [securityCard])
 
-  // Atualiza permissões/módulos periodicamente enquanto logado.
+  // Atualiza permissï¿½es/mï¿½dulos periodicamente enquanto logado.
   useEffect(() => {
     if (!currentUser?.username) return
     const interval = window.setInterval(async () => {
