@@ -71,13 +71,21 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
   const [permissoes, setPermissoes] = useState(INITIAL_PERMISSIONS)
   const [sectorSelection, setSectorSelection] = useState('')
   const [usernameError, setUsernameError] = useState('')
+  const [validationErrors, setValidationErrors] = useState({
+    name: false,
+    username: false,
+    job_title: false,
+    type_user: false,
+    authorizedSector: false,
+    authorizedModules: false,
+  })
 
   const handleUsernameChange = (value: string) => {
     const upperValue = value.toUpperCase()
     
     // Verificar se há espaços
     if (upperValue.includes(' ')) {
-      setUsernameError('Username não pode conter espaços. Use apenas letras, números e caracteres especiais como _ ou -')
+      setUsernameError('Não pode conter espaços. Use apenas letras, números e caracteres especiais como _ ou -')
     } else {
       setUsernameError('')
     }
@@ -169,72 +177,98 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
     setNewUser((p) => ({ ...p, authorizedModules: current.filter((m) => m !== moduleString).join('\n') }))
   }
 
+  const validateForm = () => {
+    const errors = {
+      name: !newUser.name?.trim(),
+      username: !newUser.username?.trim(),
+      job_title: !newUser.job_title?.trim(),
+      type_user: !newUser.type_user?.trim(),
+      authorizedSector: !newUser.authorizedSector?.trim(),
+      authorizedModules: !newUser.authorizedModules?.trim(),
+    }
+    setValidationErrors(errors)
+    return !Object.values(errors).some(Boolean)
+  }
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    if (!validateForm()) {
+      e.preventDefault()
+      return
+    }
+    onSubmit(e)
+  }
+
   return (
-    <form className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-6 mt-2" onSubmit={onSubmit}>
+    <form className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-6 mt-2" onSubmit={handleFormSubmit}>
       {/* Row 1 - Nome / Usuario */}
       <div className="col-span-12 md:col-span-8">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Nome completo</label>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Nome completo</label>
         <input
           type="text"
           name="name"
-          placeholder="DIGITE O NOME COMPLETO"
+          placeholder="Entre com o nome completo"
           value={newUser.name}
           onChange={(e) => !readonly && setNewUser((p) => ({ ...p, name: e.target.value }))}
-          className={getInputClasses(false)}
+          className={getInputClasses(validationErrors.name)}
           readOnly={readonly}
           required
         />
+        {validationErrors.name && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
 
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Usuario</label>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Usuário</label>
         <input
           type="text"
           name="username"
-          placeholder="NOME DE USUÁRIO"
+          placeholder="Nome de Usuário"
           value={newUser.username}
           onChange={(e) => !readonly && handleUsernameChange(e.target.value)}
-          className={getInputClasses(!!usernameError)}
+          className={getInputClasses(validationErrors.username || !!usernameError)}
           readOnly={readonly}
           required
         />
+        {validationErrors.username && !usernameError && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
         {usernameError && <span className="text-red-300 text-xs mt-1 block">{usernameError}</span>}
       </div>
 
       {/* Row 2 - Cargo / Perfil / Data */}
         <div className="col-span-12 md:col-span-5">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Cargo</label>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Cargo</label>
           <input
           type="text"
           name="job_title"
-          placeholder="CARGO DO USUÁRIO"
+          placeholder="Cargo do usuário"
           value={newUser.job_title}
           onChange={(e) => !readonly && setNewUser((p) => ({ ...p, job_title: e.target.value.toUpperCase() }))}
-          className={getInputClasses(false)}
+          className={getInputClasses(validationErrors.job_title)}
           readOnly={readonly}
         />
+        {validationErrors.job_title && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Perfil</label>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Perfil</label>
         <select
           name="type_user"
           value={newUser.type_user}
           onChange={(e) => !readonly && setNewUser((p) => ({ ...p, type_user: e.target.value }))}
-          className={getInputClasses(false)}
+          className={getInputClasses(validationErrors.type_user)}
           disabled={readonly}
         >
           <option value="Usuario">USUARIO</option>
           <option value="Administrador">ADMINISTRADOR</option>
+          <option value="Gerente">GERENTE</option>
         </select>
+        {validationErrors.type_user && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
       <div className="col-span-12 md:col-span-3">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Data de Registro</label>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Data de Registro</label>
         <input type="date" value={newUser.date_registration} readOnly className={getInputClasses(false, true)} />
       </div>
 
       {/* Row 3 - Setor / Setor Autorizado */}
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Setor</label>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Setor</label>
         <select
           value={sectorSelection}
           onChange={(e) => {
@@ -258,8 +292,8 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
       </div>
 
       <div className="col-span-12 md:col-span-8">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Setor Autorizado</label>
-        <div className={getTagContainerClasses(false, 'min-h-[45px] max-h-[79px]')}>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Setor Autorizado</label>
+        <div className={getTagContainerClasses(validationErrors.authorizedSector, 'min-h-[45px] max-h-[77px]')}>
           {getSectorsArray().map((s) => (
             <span
               key={s}
@@ -278,11 +312,12 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
             </span>
           ))}
         </div>
+        {validationErrors.authorizedSector && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
 
       {/* Row 4 - Modulos / Permissoes / Add */}
       <div className="col-span-12 md:col-span-4">
-          <label className="block text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Módulos</label>
+          <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Módulos</label>
         <select
           value={newUser.modules}
           onChange={(e) => !readonly && setNewUser((p) => ({ ...p, modules: e.target.value }))}
@@ -353,8 +388,8 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
 
       {/* Modulos autorizados */}
       <div className="col-span-12 md:col-span-8">
-          <label className="text-[10px] text-white/70 mb-1 uppercase tracking-[0.18em]">Módulos Autorizados</label>
-        <div className={getTagContainerClasses(false, 'min-h-[45px] max-h-[113px]')}>
+          <label className="text-[10px] text-white/70 mb-1 tracking-[0.18em]">Módulos Autorizados</label>
+        <div className={getTagContainerClasses(validationErrors.authorizedModules, 'min-h-[45px] max-h-[112px]')}>
           {getModulesArray().map((m, idx) => (
             <span
               key={idx}
@@ -373,6 +408,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
             </span>
           ))}
         </div>
+        {validationErrors.authorizedModules && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
 
       {createFeedback && (

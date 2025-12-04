@@ -552,7 +552,7 @@ const Security: React.FC<SecurityProps> = ({
 
       {showViewEdit && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 overflow-y-auto">
-          <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-7xl p-4 my-4">
+          <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl p-4 my-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-white text-2xl font-bold">
                 {viewEditMode === 'view' ? 'Visualizar Usuário' : 'Editar Usuário'}
@@ -796,7 +796,7 @@ const Security: React.FC<SecurityProps> = ({
 
       {showCreate && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 overflow-y-auto">
-          <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-7xl p-4 my-4">
+          <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl p-4 my-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-white text-2xl font-bold">
                 Criar Usuário
