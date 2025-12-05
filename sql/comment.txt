@@ -1,0 +1,29 @@
+Recursos Humanos
+- Recrutamento → Recruitment
+Processo de atrair e selecionar candidatos para vagas.
+- Folha de pagamento → Payroll
+Sistema de cálculo e gestão de salários, impostos e encargos trabalhistas.
+- Treinamento → Training
+Atividades de capacitação e desenvolvimento de habilidades dos colaboradores.
+- Escala e férias → Shift schedule and vacation
+Organização de turnos de trabalho e controle de períodos de férias.
+- Avaliação → Evaluation / Performance appraisal
+Processo de medir desempenho, competências ou resultados dos funcionários.
+- Comunicação → Communication
+Fluxo de informações internas e externas na empresa.
+- Saúde e segurança → Health and safety
+Práticas e normas para proteger colaboradores de riscos físicos e ocupacionais.
+- Benefícios → Benefits
+Vantagens oferecidas além do salário (plano de saúde, vale-alimentação, etc.).
+- Desenvolvimento → Development
+Crescimento profissional e organizacional, incluindo planos de carreira.
+
+Tecnologia da Informação
+- Infraestrutura → Infrastructure
+Recursos físicos e tecnológicos que sustentam operações da empresa.
+- Segurança → Security
+Proteção contra riscos físicos e digitais (acesso, dados, patrimônio).
+- Banco de dados → Database
+Estrutura organizada para armazenar e gerenciar informações digitais.
+- Carga de tabela → Table load / Data loading
+Processo de inserir ou atualizar dados em tabelas de um banco de dados.
