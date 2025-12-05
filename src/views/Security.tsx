@@ -6,8 +6,8 @@ import {
   ChevronUp,
   ChevronsUpDown,
   Eye,
-  KeyRound,
-  Pencil,
+  RotateCcwKey,
+  Edit,
   Search,
   Trash2,
   UserPlus,
@@ -560,8 +560,8 @@ const Security: React.FC<SecurityProps> = ({
       {showViewEdit && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 overflow-y-auto">
           <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl p-4 my-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-white text-2xl font-bold">
+            <div className="flex items-center justify-between mb-3 bg-blue-900/30 border border-blue-500/40 px-4 py-3 rounded-lg">
+              <h2 className="text-white text-2xl font-bold flex-1 text-center">
                 {viewEditMode === 'view' ? 'Visualizar Usuário' : 'Editar Usuário'}
               </h2>
               <button
@@ -569,7 +569,7 @@ const Security: React.FC<SecurityProps> = ({
                   setShowViewEdit(false)
                   setUpdateFeedback(null)
                 }}
-                className="text-white/60 hover:text-white transition-colors"
+                className="text-white/60 hover:text-white hover:border-red-400 border border-transparent rounded-lg p-1 transition-all ml-auto"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -687,7 +687,7 @@ const Security: React.FC<SecurityProps> = ({
                         onClick={() => handleSort('name')}
                       >
                         {renderSortIcon('name')}
-                        Usuario
+                        Nome Completo
                       </button>
                     </th>
                     <th className="py-2 px-1 font-semibold text-center border-b border-white/10 hidden md:table-cell">
@@ -737,10 +737,10 @@ const Security: React.FC<SecurityProps> = ({
                   {filteredUsers.map((user) => (
                     <tr key={user.id} className="hover:bg-emerald-500/5 transition-colors border-b border-white/10 text-sm">
                       <td className="py-1.5 px-3 text-white text-left border-r border-white/10">{user.name}</td>
-                      <td className="py-1 px-1 align-top text-xs text-white/85 border-r border-white/10 hidden md:table-cell">
+                      <td className="py-1 px-1 align-center text-xs text-white/85 border-r border-white/10 hidden md:table-cell">
                         {user.type_user}
                       </td>
-                      <td className="py-1 px-1 align-top border-r border-white/10 hidden md:table-cell">
+                      <td className="py-1 px-1 align-center border-r border-white/10 hidden md:table-cell">
                         <span
                           className={`text-xs font-semibold ${
                             user.is_authorized ? 'text-emerald-300' : 'text-rose-300'
@@ -749,13 +749,13 @@ const Security: React.FC<SecurityProps> = ({
                           {user.is_authorized ? 'Ativo' : 'Inativo'}
                         </span>
                       </td>
-                      <td className="py-1 px-1 align-top text-white border-r border-white/10 hidden lg:table-cell">
+                      <td className="py-1 px-1 align-center text-white border-r border-white/10 hidden lg:table-cell">
                         {user.role}
                       </td>
-                      <td className="py-1 px-1 align-top text-white border-r border-white/10 hidden lg:table-cell">
+                      <td className="py-1 px-1 align-center text-white border-r border-white/10 hidden lg:table-cell">
                         {user.sector}
                       </td>
-                      <td className="py-1 px-0 align-top">
+                      <td className="py-1 px-0 align-center">
                         <div className="flex items-center justify-center gap-0 text-white/80">
                           {canUpdate && (
                             <>
@@ -764,26 +764,16 @@ const Security: React.FC<SecurityProps> = ({
                                 onClick={() => handleEditUser(user)}
                                 title="Editar usuário"
                               >
-                                <Pencil className="w-4 h-4 text-blue-300" />
+                                <Edit className="w-5 h-5 text-blue-400" /> 
                               </button>
                               <button
                                 className="p-1 rounded hover:bg-white/10 transition-colors"
                                 onClick={() => handleViewUser(user)}
                                 title="Visualizar detalhes"
                               >
-                                <Eye className="w-4 h-4 text-emerald-300" />
+                                <Eye className="w-5 h-5 text-emerald-400" />
                               </button>
                             </>
-                          )}
-                          {canPassword && (
-                            <button
-                              className="p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              onClick={() => setConfirmUser(user)}
-                              disabled={isResettingId === user.id}
-                              title="Redefinir senha"
-                            >
-                              <KeyRound className="w-4 h-4 text-cyan-300" />
-                            </button>
                           )}
                           {canDelete && (
                             <button
@@ -792,10 +782,20 @@ const Security: React.FC<SecurityProps> = ({
                               onClick={() => setConfirmDelete(user)}
                               disabled={isDeletingId === user.id}
                             >
-                              <Trash2 className="w-4 h-4 text-rose-300" />
+                              <Trash2 className="w-5 h-5 text-red-400" />
                             </button>
                           )}
-                          {!canUpdate && !canPassword && !canDelete && (
+                          {canPassword && (
+                            <button
+                              className="p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              onClick={() => setConfirmUser(user)}
+                              disabled={isResettingId === user.id}
+                              title="Redefinir senha"
+                            >
+                              <RotateCcwKey className="w-5 h-5 text-violet-400" />
+                            </button>
+                          )}
+                         {!canUpdate && !canPassword && !canDelete && (
                             <span className="text-white/50 text-xs">--</span>
                           )}
                         </div>
@@ -810,8 +810,8 @@ const Security: React.FC<SecurityProps> = ({
       {showCreate && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 overflow-y-auto">
           <div className="bg-slate-900/90 border border-white/15 rounded-2xl shadow-2xl w-full max-w-4xl p-4 my-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-white text-2xl font-bold">
+            <div className="flex items-center justify-between mb-3 bg-blue-900/30 border border-blue-500/40 px-4 py-3 rounded-lg">
+              <h2 className="text-white text-2xl font-bold flex-1 text-center">
                 Criar Usuário
               </h2>
               <button
@@ -819,7 +819,7 @@ const Security: React.FC<SecurityProps> = ({
                   setShowCreate(false)
                   setCreateFeedback(null)
                 }}
-                className="text-white/60 hover:text-white transition-colors"
+                className="text-white/60 hover:text-white hover:border-red-400 border border-transparent rounded-lg p-1 transition-all ml-auto"
               >
                 <X className="w-6 h-6" />
               </button>

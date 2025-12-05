@@ -1,5 +1,5 @@
 ﻿import React, { useState } from 'react'
-import { X, PlusCircle, Edit, Trash2, Eye, KeyRound, ChevronsRight } from 'lucide-react'
+import { X, UserPlus, Edit, Trash2, Eye, RotateCcwKey, ChevronsRight } from 'lucide-react'
 import { MODULE_LABELS } from '../utils/moduleParser'
 
 export type NewUserData = {
@@ -52,7 +52,7 @@ const AVAILABLE_SECTORS = [
 
 const AVAILABLE_MODULES = MODULE_LABELS
 
-const INITIAL_PERMISSIONS = { creater: false, update: false, delete: false, read: false, password: false }
+const INITIAL_PERMISSIONS = { creater: false, update: false, read: false, delete: false, password: false }
 
 export default function UserForm({ newUser, setNewUser, isCreating, createFeedback, onCancel, onSubmit, readonly = false }: Props) {
   const [permissoes, setPermissoes] = useState(INITIAL_PERMISSIONS)
@@ -253,7 +253,7 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
           <option value="ADMINISTRADOR" className="bg-[#202422] text-white border-0 outline-none">ADMINISTRADOR</option>
           <option value="GERENTE" className="bg-[#202422] text-white border-0 outline-none">GERENTE</option>
         </select>
-        {validationErrors.type_user && <span className="text-orange-400 text-xs mt-1 block">? Usuário não disponivel</span>}
+        {validationErrors.type_user && <span className="text-orange-400 text-xs mt-1 block">⚠ Preencha este campo.</span>}
       </div>
       <div className="col-span-12 md:col-span-3">
           <label className="block text-[10px] text-white/70 mb-1 tracking-[0.18em]">Data de Registro</label>
@@ -344,27 +344,27 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
                   className="sr-only"
                 />
                 <div
-                  className={`w-9 h-9 flex items-center justify-center rounded-md bg-white/5 border transition-all ${
+                  className={`w-8 h-8 flex items-center justify-center rounded bg-[#2b2b40] border border-gray-600 peer-checked:border-[#10b981] peer-checked:bg-[#10b981]/20 transition-all ${
                     (permissoes as any)[k]
                         ? (k === 'creater'
-                          ? 'bg-emerald-600/12 border border-emerald-500/80 ring-2 ring-emerald-300/50'
+                          ? 'bg-amber-600/12 border border-amber-500/80 ring-2 ring-amber-300/50'
                           : k === 'update'
                           ? 'bg-sky-600/10 border border-sky-500/80 ring-2 ring-sky-300/50'
                           : k === 'delete'
-                          ? 'bg-rose-600/10 border border-rose-500/80 ring-2 ring-rose-300/50'
+                          ? 'bg-red-600/10 border border-red-500/80 ring-2 ring-red-300/50'
                           : k === 'read'
-                          ? 'bg-amber-500/10 border border-amber-400/80 ring-2 ring-amber-300/50'
+                          ? 'bg-emerald-500/10 border border-emerald-400/80 ring-2 ring-emerald-300/50'
                           : k === 'password'
                           ? 'bg-violet-600/10 border border-violet-400/80 ring-2 ring-violet-300/50'
                           : '')
                       : 'hover:bg-white/6'
                   }`}
                 >
-                  {k === 'creater' ? <PlusCircle size={18} className={`${(permissoes as any)[k] ? 'text-emerald-300' : 'text-white/60'}`} /> : null}
-                  {k === 'update' ? <Edit size={18} className={`${(permissoes as any)[k] ? 'text-blue-300' : 'text-white/60'}`} /> : null}
-                  {k === 'delete' ? <Trash2 size={18} className={`${(permissoes as any)[k] ? 'text-rose-300' : 'text-white/60'}`} /> : null}
-                  {k === 'read' ? <Eye size={18} className={`${(permissoes as any)[k] ? 'text-amber-300' : 'text-white/60'}`} /> : null}
-                  {k === 'password' ? <KeyRound size={18} className={`${(permissoes as any)[k] ? 'text-violet-300' : 'text-white/60'}`} /> : null}
+                  {k === 'creater' ? <UserPlus size={22} className={`${(permissoes as any)[k] ? 'text-amber-400' : 'text-gray-500'}`} /> : null}
+                  {k === 'update' ? <Edit size={22} className={`${(permissoes as any)[k] ? 'text-blue-400' : 'text-gray-500'}`} /> : null}
+                  {k === 'delete' ? <Trash2 size={22} className={`${(permissoes as any)[k] ? 'text-red-400' : 'text-gray-500'}`} /> : null}
+                  {k === 'read' ? <Eye size={22} className={`${(permissoes as any)[k] ? 'text-emerald-400' : 'text-gray-500'}`} /> : null}
+                  {k === 'password' ? <RotateCcwKey size={25} className={`${(permissoes as any)[k] ? 'text-violet-400' : 'text-gray-500'}`} /> : null}
                 </div>
               </label>
             )
@@ -374,9 +374,9 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
               type="button"
               onClick={handleAddModule}
               title="Adicionar módulo com permissões"
-              className="ml-auto flex items-center justify-center px-6 py-2 rounded-lg bg-transparent border border-emerald-400/60 text-white/90 hover:bg-emerald-500/12 hover:border-emerald-300/80 transition-all shadow-sm"
+              className="ml-auto flex items-center justify-center px-3 py-1 rounded-lg bg-transparent border border-gray-600 text-white/90 hover:bg-emerald-500/12 hover:border-emerald-300/80 transition-all shadow-sm"
             >
-              <ChevronsRight className="w-5 h-5 text-white" />
+              <ChevronsRight className="w-6 h-6 text-gray-500" />
             </button>
           </div>
         )}
