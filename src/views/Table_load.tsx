@@ -10,7 +10,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { validateEmployeeSheet, validateEmployeeRow, formatCPF, formatDate, formatSalary } from '../utils/employeeParser'
+import { validateEmployeeSheet, validateEmployeeRow, formatCPF, formatDate, formatSalary, REQUIRED_FIELDS } from '../utils/employeeParser'
 
 type ImportStatus = 'idle' | 'validating' | 'uploading' | 'done' | 'error'
 type SheetData = Record<string, any>[]
@@ -45,6 +45,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
   const [columns, setColumns] = useState<string[]>([])
   const [validationErrors, setValidationErrors] = useState<RowError[]>([])
   const [sheetHeaderError, setSheetHeaderError] = useState<string[]>([])
+  const [previewVisible, setPreviewVisible] = useState<boolean>(false)
 
   const statusLabel: Record<ImportStatus, string> = {
     idle: 'Aguardando',
@@ -65,6 +66,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     setMessages([])
     setSheetData([])
     setColumns([])
+    setPreviewVisible(false)
     if (file) {
       pushMessage(`Arquivo selecionado: ${file.name}`)
       // Ler automaticamente o arquivo ao selecionar
@@ -127,7 +129,8 @@ const TableLoad: React.FC<TableLoadProps> = ({
           pushMessage(`✅ Todas as ${jsonData.length} linhas validadas com sucesso`)
         }
 
-        setColumns(cols)
+        const displayColumns = REQUIRED_FIELDS.filter((field) => cols.includes(field))
+        setColumns(displayColumns)
         setSheetData(jsonData)
         pushMessage(`Planilha carregada: ${jsonData.length} linha(s)`)
       } catch (error) {
@@ -157,6 +160,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
     try {
+      setPreviewVisible(false)
       setStatus('validating')
       setProgress(20)
       pushMessage(`Validando "${selectedFile.name}" (${sheetType})...`)
@@ -170,10 +174,12 @@ const TableLoad: React.FC<TableLoadProps> = ({
       setStatus('done')
       setProgress(100)
       pushMessage('Importacao concluida.')
+      setPreviewVisible(true)
     } catch (error) {
       console.error('Erro na importacao simulada:', error)
       setStatus('error')
       pushMessage('Erro ao importar. Tente novamente.')
+      setPreviewVisible(false)
     }
   }
 
@@ -186,6 +192,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     setColumns([])
     setValidationErrors([])
     setSheetHeaderError([])
+    setPreviewVisible(false)
   }
 
   const getStatusColor = () => {
@@ -545,7 +552,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
           </div>
         )}
 
-        {sheetData.length > 0 && (
+        {previewVisible && sheetData.length > 0 && (
           <div className="bg-slate-900/70 border border-white/10 rounded-xl p-4 space-y-3">
             <div className="flex items-center gap-2 mb-4">
               <FileSpreadsheet className="w-5 h-5 text-emerald-300" />

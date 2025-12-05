@@ -1,4 +1,4 @@
-// Mapeamento de campos da planilha para banco de dados
+﻿// Mapeamento de campos da planilha para banco de dados
 export const EMPLOYEE_FIELD_MAPPING = {
   // Campos obrigatórios (conforme SQL)
   'Empresa': 'company',
@@ -74,9 +74,9 @@ export const formatSalary = (salary: any): string => {
   
   let numValue: number
   
-  // Se for string com formatação brasileira ###.###.##0,0000
+  // Se for string com formataÃ§Ã£o brasileira ###.###.##0,0000
   if (typeof salary === 'string') {
-    // Remove pontos de milhar e substitui vírgula por ponto
+    // Remove pontos de milhar e substitui vÃ­rgula por ponto
     numValue = parseFloat(String(salary).replace(/\./g, '').replace(',', '.'))
   } else {
     numValue = parseFloat(String(salary))
@@ -88,7 +88,14 @@ export const formatSalary = (salary: any): string => {
   return `R$ ${numValue.toFixed(2).replace('.', ',')}`
 }
 
-// Campos obrigatórios que devem estar presentes na planilha
+// NormalizaÃ§ao para campos inteiros
+export const formatInteger = (value: any): string => {
+  if (value === null || value === undefined) return ''
+  const cleaned = String(value).replace(/\D/g, '')
+  return cleaned
+}
+
+// Campos obrigatÃ³rios que devem estar presentes na planilha
 export const REQUIRED_FIELDS = [
   'Empresa',
   'Cadastro',
@@ -136,7 +143,21 @@ export const validateEmployeeRow = (row: Record<string, any>): { valid: boolean;
   if (row['CPF']) {
     const cpf = String(row['CPF']).replace(/\D/g, '')
     if (cpf.length !== 11) {
-      errors.push(`CPF inválido: deve ter 11 dígitos`)
+      errors.push('CPF inválido: deve ter 11 dígitos')
+    }
+  }
+
+  // Validar campos numéricos (Empresa, Situação)
+  if (row['Empresa']) {
+    const empresa = formatInteger(row['Empresa'])
+    if (!empresa || isNaN(Number(empresa))) {
+      errors.push('Empresa deve ser numérica (inteiro)')
+    }
+  }
+  if (row['Situação']) {
+    const situacao = formatInteger(row['Situação'])
+    if (!situacao || isNaN(Number(situacao))) {
+      errors.push('Situação deve ser numérica (inteiro)')
     }
   }
 
@@ -161,7 +182,7 @@ export const validateEmployeeRow = (row: Record<string, any>): { valid: boolean;
   if (row['Valor Salário']) {
     const formatted = formatSalary(row['Valor Salário'])
     if (!formatted) {
-      errors.push(`Salário deve ser numérico`)
+      errors.push('Salário deve ser numérico')
     }
   }
 
@@ -169,7 +190,7 @@ export const validateEmployeeRow = (row: Record<string, any>): { valid: boolean;
   if (row['Sexo']) {
     const sexo = String(row['Sexo']).toUpperCase()
     if (!['M', 'F', 'MASCULINO', 'FEMININO'].includes(sexo)) {
-      errors.push(`Sexo deve ser M/F ou Masculino/Feminino`)
+      errors.push('Sexo deve ser M/F ou Masculino/Feminino')
     }
   }
 
@@ -182,10 +203,13 @@ export const validateEmployeeRow = (row: Record<string, any>): { valid: boolean;
 export const formatRowData = (row: Record<string, any>): Record<string, any> => {
   return {
     ...row,
+    Empresa: formatInteger(row['Empresa']),
     CPF: formatCPF(row['CPF']),
     Nascimento: formatDate(row['Nascimento']),
     Admissão: formatDate(row['Admissão']),
     'Data Afastamento': formatDate(row['Data Afastamento']),
+    Situação: formatInteger(row['Situação']),
     'Valor Salário': formatSalary(row['Valor Salário']),
   }
 }
+
