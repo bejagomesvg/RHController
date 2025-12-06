@@ -9,7 +9,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { validateEmployeeSheet, validateEmployeeRow, formatCPF, formatDate, formatSalary, REQUIRED_FIELDS } from '../utils/employeeParser'
+import { validateEmployeeSheet, validateEmployeeRow, formatCPF, formatDate, REQUIRED_FIELDS } from '../utils/employeeParser'
 
 type ImportStatus = 'idle' | 'validating' | 'uploading' | 'done' | 'error'
 type SheetData = Record<string, any>[]
@@ -66,20 +66,24 @@ const TableLoad: React.FC<TableLoadProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [sheetType, setSheetType] = useState<'CADASTRO' | 'HORAS_EXTRAS' | 'FECHAMENTO' | ''>('')
+  const [sheetType, setSheetType] = useState<'CADASTRO' | 'HORAS EXTRAS' | 'FOLHA PGTO' | ''>('')
   const [status, setStatus] = useState<ImportStatus>('idle')
   const [progress, setProgress] = useState<number>(0)
   const [messages, setMessages] = useState<string[]>([])
   const [sheetData, setSheetData] = useState<SheetData>([])
-  const [columns, setColumns] = useState<string[]>([])
   const [sheetHeaderError, setSheetHeaderError] = useState<string[]>([])
-  const [previewVisible, setPreviewVisible] = useState<boolean>(false)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [importFinished, setImportFinished] = useState<boolean>(false)
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
 
   const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || importFinished
+
+  const resetFileInput = () => {
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const isSupportedSheet = sheetType === 'CADASTRO'
 
   const statusLabel: Record<ImportStatus, string> = {
     idle: '',
@@ -115,6 +119,22 @@ const TableLoad: React.FC<TableLoadProps> = ({
     return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(
       date.getMinutes()
     )}`
+  }
+
+  const parseNumber = (val: any): number | null => {
+    const num = Number(String(val).replace(/\D/g, ''))
+    return Number.isNaN(num) ? null : num
+  }
+
+  const parseDateIso = (val: any): string | null => {
+    const formatted = formatDate(val)
+    return formatted || null
+  }
+
+  const parseSalary = (val: any): number | null => {
+    if (!val && val !== 0) return null
+    const parsed = Number(String(val).replace(/[^\d,-]/g, '').replace(',', '.'))
+    return Number.isNaN(parsed) ? null : parsed
   }
 
   const fetchHistory = async () => {
@@ -155,78 +175,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     }
   }
 
-  const syncEmployeeLogs = async () => {
-    if (!supabaseUrl || !supabaseKey) {
-      pushMessage('❌ Supabase não configurado para sincronizar employee')
-      return
-    }
-    try {
-      const empUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-      empUrl.searchParams.set('select', 'id,registration,date_registration,user_registration')
-      const empRes = await fetch(empUrl.toString(), {
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-        },
-      })
-      if (!empRes.ok) {
-        console.error('Erro ao buscar employee', await empRes.text())
-        pushMessage('❌ Erro ao ler tabela employee')
-        return
-      }
-      const employees = (await empRes.json()) as Array<{
-        id: number
-        registration: string
-        date_registration: string | null
-        user_registration: string | null
-      }>
-      if (!employees.length) return
-
-      const maxLen = 50
-      const truncate = (value: string) => (value.length > maxLen ? value.slice(0, maxLen) : value)
-      const payload = employees.map((emp) => ({
-        id: emp.id ?? Math.floor(Math.random() * 900_000_000) + 1,
-        registration: truncate(emp.registration || '-'),
-        date_registration: emp.date_registration || new Date().toISOString(),
-        file_: 'cadastro.xlsx',
-        user_registration: truncate(emp.user_registration || userName || '-'),
-      }))
-
-      const insertUrl = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
-      insertUrl.searchParams.set('on_conflict', 'id')
-      const res = await fetch(insertUrl.toString(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          Prefer: 'return=representation,resolution=merge-duplicates',
-        },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        console.error('Erro ao sincronizar logs', await res.text())
-        pushMessage('❌ Erro ao sincronizar logs do employee')
-        return
-      }
-      await fetchHistory()
-      pushMessage('✅ Logs sincronizados com employee')
-    } catch (error) {
-      console.error('Erro ao sincronizar logs', error)
-      pushMessage('❌ Erro ao sincronizar logs do employee')
-    }
-  }
-
   const mapRowToEmployee = (row: Record<string, any>): EmployeePayload => {
-    const parseNumber = (val: any): number | null => {
-      const num = Number(String(val).replace(/\D/g, ''))
-      return Number.isNaN(num) ? null : num
-    }
-    const parseDateIso = (val: any): string | null => {
-      const formatted = formatDate(val)
-      return formatted || null
-    }
-
     return {
       company: parseNumber(row['Empresa']),
       registration: parseNumber(row['Cadastro']),
@@ -243,11 +192,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
       sex: row['Sexo'] ? String(row['Sexo']).trim() : null,
       marital: row['Descrição (Estado Civil)'] ? String(row['Descrição (Estado Civil)']).trim() : null,
       ethnicity: row['Descrição (Raça/Etnia)'] ? String(row['Descrição (Raça/Etnia)']).trim() : null,
-      salary: (() => {
-        if (!row['Valor Salário'] && row['Valor Salário'] !== 0) return null
-        const parsed = Number(String(row['Valor Salário']).replace(/[^\d,-]/g, '').replace(',', '.'))
-        return Number.isNaN(parsed) ? null : parsed
-      })(),
+      salary: parseSalary(row['Valor Salário']),
       type_registration: 'importado',
       user_registration: userName || null,
       date_registration: new Date().toISOString(),
@@ -373,17 +318,38 @@ const TableLoad: React.FC<TableLoadProps> = ({
   }
 
   useEffect(() => {
+    setSelectedFile(null)
+    setSheetData([])
+    setSheetHeaderError([])
+    setImportFinished(false)
+    setStatus('idle')
+    setProgress(0)
+    setMessages([])
+    resetFileInput()
+    if (sheetType && sheetType !== 'CADASTRO') {
+      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+    }
+  }, [sheetType])
+
+  useEffect(() => {
     fetchHistory()
   }, [])
 
   const handleFileSelect = (file: File | null) => {
+    if (sheetType && sheetType !== 'CADASTRO') {
+      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+      setSelectedFile(null)
+      setSheetData([])
+      resetFileInput()
+      setStatus('idle')
+      setProgress(0)
+      return
+    }
     setSelectedFile(file)
     setProgress(0)
     setStatus('idle')
     setMessages([])
     setSheetData([])
-    setColumns([])
-    setPreviewVisible(false)
     setImportFinished(false)
     if (file) {
       pushMessage(`Arquivo selecionado: ${file.name}`)
@@ -393,6 +359,15 @@ const TableLoad: React.FC<TableLoadProps> = ({
   }
 
   const readExcelFile = (file: File) => {
+    if (sheetType && sheetType !== 'CADASTRO') {
+      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+      setSheetData([])
+      resetFileInput()
+      setSelectedFile(null)
+      setStatus('idle')
+      setProgress(0)
+      return
+    }
     const reader = new FileReader()
     reader.onload = (e) => {
       try {
@@ -406,7 +381,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
         if (jsonData.length === 0) {
           pushMessage('Arquivo vazio.')
           setSheetData([])
-          setColumns([])
           setSheetHeaderError([])
           return
         }
@@ -420,7 +394,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
           const missing = headerValidation.missingFields.join(', ')
           pushMessage(`❌ Campos obrigatórios faltando: (${missing})`)
           setSheetData([])
-          setColumns([])
           return
         }
 
@@ -455,15 +428,12 @@ const TableLoad: React.FC<TableLoadProps> = ({
           pushMessage(`Todas as ${jsonData.length} linhas validadas com sucesso`)
         }
 
-        const displayColumns = REQUIRED_FIELDS.filter((field) => cols.includes(field))
-        setColumns(displayColumns)
         setSheetData(jsonData)
         pushMessage(`✅ ${jsonData.length} linha(s) pronta pra ser enviada ao servidor`)
       } catch (error) {
         console.error('Erro ao ler arquivo:', error)
         pushMessage('❌ Erro ao ler o arquivo.')
         setSheetData([])
-        setColumns([])
         setSheetHeaderError([])
       }
     }
@@ -533,11 +503,15 @@ const TableLoad: React.FC<TableLoadProps> = ({
       pushMessage('Selecione um arquivo antes de importar.')
       return
     }
+    if (!isSupportedSheet) {
+      setStatus('error')
+      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+      return
+    }
 
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
     try {
-      setPreviewVisible(false)
       setStatus('validating')
       setProgress(20)
       pushMessage(`Validando a planilha "${selectedFile.name}" para ser envida ao Servidor`)
@@ -564,13 +538,11 @@ const TableLoad: React.FC<TableLoadProps> = ({
         file: selectedFile?.name || '-',
         user: userName || '-',
       })
-      setPreviewVisible(true)
       setImportFinished(true)
     } catch (error) {
       console.error('Erro na importacao simulada:', error)
       setStatus('error')
       pushMessage('Erro ao importar. Tente novamente.')
-      setPreviewVisible(false)
       setImportFinished(false)
     }
   }
@@ -582,9 +554,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     setProgress(0)
     setMessages([])
     setSheetData([])
-    setColumns([])
     setSheetHeaderError([])
-    setPreviewVisible(false)
     setImportFinished(false)
   }
 
@@ -592,23 +562,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
     if (status === 'error') return 'text-amber-300'
     if (status === 'done') return 'text-emerald-300'
     return 'text-white/80'
-  }
-
-  const formatDisplayValue = (columnName: string, value: any): string => {
-    if (!value) return '-'
-    
-    switch (columnName) {
-      case 'CPF':
-        return formatCPF(value)
-      case 'Nascimento':
-      case 'Admissão':
-      case 'Data Afastamento':
-        return formatDate(value)
-      case 'Valor Salário':
-        return formatSalary(value)
-      default:
-        return String(value)
-    }
   }
 
   return (
@@ -671,11 +624,11 @@ const TableLoad: React.FC<TableLoadProps> = ({
                 >
                   <option value="" className="bg-[#202422] text-white">Selecione</option>
                   <option value="CADASTRO" className="bg-[#202422] text-white">CADASTRO</option>
-                  <option value="HORAS_EXTRAS" className="bg-[#202422] text-white">HORAS EXTRAS</option>
-                  <option value="FECHAMENTO" className="bg-[#202422] text-white">FECHAMENTO</option>
+                  <option value="FOLHA PGTO" className="bg-[#202422] text-white">FOLHA PGTO</option>
+                  <option value="HORAS EXTRAS" className="bg-[#202422] text-white">HORAS EXTRAS</option>
                 </select>
               </div>
-              {sheetType && (
+              {sheetType === 'CADASTRO' && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -701,7 +654,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
               onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
             />
             {/* Log rápido */}
-            <div className="w-full space-y-2">
+            <div className="w-full space-y-2 max-h-[240px] overflow-y-auto pr-2">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-300" />
                 <p className="text-white font-semibold">Log rápido</p>
