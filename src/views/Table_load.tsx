@@ -63,11 +63,13 @@ const TableLoad: React.FC<TableLoadProps> = ({
   const [payrollConflictPassword, setPayrollConflictPassword] = useState<string>('')
   const [payrollPasswordErrorType, setPayrollPasswordErrorType] = useState<'required' | 'invalid' | null>(null)
   const [payrollPasswordAttempts, setPayrollPasswordAttempts] = useState<number>(0)
+  const [payrollConflictDate, setPayrollConflictDate] = useState<string | null>(null)
+  const [payrollDeletedSuccessfully, setPayrollDeletedSuccessfully] = useState<boolean>(false)
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
   const sessionUser = loadSession()
 
-  const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || importFinished
+  const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || (importFinished && !payrollDeletedSuccessfully)
   const supportedSheets = ['CADASTRO', 'FOLHA PGTO'] as const
   const isSupportedSheet = supportedSheets.includes(sheetType as any)
   const isCadastro = sheetType === 'CADASTRO'
@@ -125,14 +127,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
     if (Number.isNaN(d.getTime())) return ''
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${pad(d.getMonth() + 1)}/${d.getFullYear()}`
-  }
-
-  const refToIsoDate = (ref?: string | null) => {
-    if (!ref) return ''
-    const [month, year] = ref.split('/')
-    if (!month || !year) return ''
-    const mm = month.padStart(2, '0')
-    return `${year}-${mm}-01`
   }
 
   useEffect(() => {
@@ -283,6 +277,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
             const text = `:) Pagamento ref. ${refMonth} ja consta em payroll.`
             pushMessage(text)
             setPayrollConflictRef(refMonth)
+            setPayrollConflictDate(paymentValue)
             setStatus('idle'); setNeutralLogStyle(true)
             setImportFinished(false)
             return
@@ -397,6 +392,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
           const text = `:) Pagamento ref. ${payrollConflictRefValue} ja consta em payroll.`
           pushMessage(text)
           setPayrollConflictRef(payrollConflictRefValue)
+          setPayrollConflictDate(jsonData[0]?.['Pagamento'] || null)
           setStatus('idle'); setNeutralLogStyle(true)
           setImportFinished(false)
           return
@@ -464,7 +460,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
         await insertHistory(
           {
             registration: `Folha Pgto Ref.: ${getRefMonthYear(sheetData[0]?.['Pagamento']) || '-'}`,
-            actions: 'IMPORTACAO',
+            actions: 'Inclusao',
             date: formatNow(),
             file: selectedFile?.name || '-',
             user: userName || '-',
@@ -482,7 +478,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
         await insertHistory(
           {
             registration: 'Cadastro de Funcionario',
-            actions: 'IMPORTACAO',
+            actions: 'Inclusao',
             date: formatNow(),
             file: selectedFile?.name || '-',
             user: userName || '-',
@@ -528,13 +524,13 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
   const renderActionIcon = (acao?: string) => {
     const value = (acao || '').toLowerCase()
-    if (value === 'inclusao' || value === 'inclusão') {
+    if (value === 'inclusao' || value === 'inclusï¿½o') {
       return <Check className="w-4 h-4 text-emerald-400 mx-auto" />
     }
-    if (value === 'delete' || value === 'exclusao' || value === 'exclusão') {
+    if (value === 'delete' || value === 'exclusao' || value === 'exclusï¿½o') {
       return <X className="w-4 h-4 text-rose-400 mx-auto" />
     }
-    if (value === 'alterou' || value === 'alteracao' || value === 'alteração' || value === 'update') {
+    if (value === 'alterou' || value === 'alteracao' || value === 'alteraï¿½ï¿½o' || value === 'update') {
       return <TriangleAlert className="w-4 h-4 text-amber-400 mx-auto" />
     }
     return <span className="text-white/70 text-[11px] text-center block">{acao || '-'}</span>
@@ -862,11 +858,13 @@ const TableLoad: React.FC<TableLoadProps> = ({
                     className="px-5 py-2.5 h-[44px] rounded-lg bg-white/5 border border-white/15 text-white hover:bg-white/10 transition-colors"
                     onClick={() => {
                       setPayrollConflictRef(null)
+                      setPayrollConflictDate(null)
                       pushMessage('XxX Voce cancelo a operacao')
                       setStatus('error'); setNeutralLogStyle(true)
                       setPayrollPasswordAttempts(0)
                       setPayrollPasswordErrorType(null)
                       setPayrollConflictPassword('')
+                      setPayrollDeletedSuccessfully(false)
                     }}
                   >
                     Cancelar
@@ -881,7 +879,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
                         return
                       }
                       if (!sessionUser) {
-                        pushMessage('XxX Sessao invalida. Faça login novamente.')
+                        pushMessage('XxX Sessao invalida. Faï¿½a login novamente.')
                         return
                       }
                       const isValid = await verifyPassword(pwd, sessionUser.password)
@@ -899,10 +897,60 @@ const TableLoad: React.FC<TableLoadProps> = ({
                         }
                         return
                       }
-                      if (payrollConflictRef) {
+                      // Executar exclusÃ£o
+                      if (payrollConflictRef && payrollConflictDate) {
                         pushMessage(`Excluindo fechamento da folha pgto : ${payrollConflictRef}`)
+                        setStatus('uploading')
+                        try {
+                          const deleteResult = await deletePayrollByMonth(payrollConflictDate, supabaseUrl, supabaseKey)
+                          if (!deleteResult.ok) {
+                            setStatus('error')
+                            setNeutralLogStyle(true)
+                            pushMessage(`XxX Erro ao excluir dados: ${deleteResult.error || 'erro desconhecido'}`)
+                            setPayrollConflictRef(null)
+                            setPayrollConflictDate(null)
+                            setPayrollConflictPassword('')
+                            setPayrollPasswordAttempts(0)
+                            setPayrollPasswordErrorType(null)
+                            setPayrollDeletedSuccessfully(false)
+                            return
+                          }
+                          pushMessage(`OoO ${deleteResult.deleted} registro(s) excluido(s) da folha ref. ${payrollConflictRef}`)
+                          
+                          // Registrar aÃ§Ã£o no log
+                          await insertHistory(
+                            {
+                              registration: `Folha Pgto Ref.: ${payrollConflictRef}`,
+                              actions: 'Delete',
+                              date: formatNow(),
+                              file: selectedFile?.name || '-',
+                              user: userName || '-',
+                            },
+                            supabaseUrl,
+                            supabaseKey
+                          )
+                          
+                          // Atualizar histÃ³rico
+                          const list = await fetchHistory(supabaseUrl, supabaseKey)
+                          setHistory(
+                            list.map((item) => ({
+                              ...item,
+                              date: formatDateFromDb(item.date),
+                            }))
+                          )
+                          
+                          setStatus('done')
+                          setPayrollDeletedSuccessfully(true)
+                          setImportFinished(false)
+                          pushMessage('OoO ExclusÃ£o concluida. Voce pode agora importar os novos dados.')
+                        } catch (error) {
+                          setStatus('error')
+                          setNeutralLogStyle(true)
+                          pushMessage(`XxX Erro ao excluir: ${(error as Error).message}`)
+                        }
                       }
                       setPayrollConflictRef(null)
+                      setPayrollConflictDate(null)
                       setPayrollConflictPassword('')
                       setPayrollPasswordAttempts(0)
                       setPayrollPasswordErrorType(null)

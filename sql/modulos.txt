@@ -1,0 +1,20 @@
+
+table: user_registration
+
+
+banco de dados:             Traducao: view
+recruitment	                Recrutamento
+payroll	                    Folha de Pagamento
+training	                Treinamento
+shift_schedule_and_vacation	Escala & Férias
+evaluation	                Avaliação
+communication	            Comunicação
+health_and_safety	        Saúde e Segurança
+benefits	                Benefícios
+development	                Desenvolvimento
+infrastructure	            Infraestrutura
+security	                Segurança
+database	                Banco de Dados
+table_load	                Carga de Tabelas
+
+is_autorized                OBS: na tela de cadastro nao foi apresentada porem vai com valor "TRUE"
