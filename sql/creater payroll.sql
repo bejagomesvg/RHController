@@ -12,6 +12,6 @@ CREATE TABLE IF NOT EXISTS payroll (
 
 
 /* dados da planilha
-planilha: fechamentos.xlsx
+planilha: *.xlsx
 
  */

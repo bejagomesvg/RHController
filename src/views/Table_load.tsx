@@ -1,15 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react'
+﻿import React, { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import {
-  ArrowLeft,
-  CheckCircle2,
-  ClipboardList,
-  FileSpreadsheet,
-  Loader2,
-  Upload,
-  X,
-} from 'lucide-react'
-import { validateEmployeeSheet, validateEmployeeRow, formatCPF, formatDate, REQUIRED_FIELDS } from '../utils/employeeParser'
+import { ArrowLeft, Check, CheckCircle2, ClipboardList, FileSpreadsheet, Loader2, Upload, X } from 'lucide-react'
+import { validateEmployeeSheet, validateEmployeeRow, REQUIRED_FIELDS, formatDate } from '../utils/employeeParser'
+import { insertEmployees, fetchEmployeeRegistrations } from '../services/employeeService'
+import { insertPayroll } from '../services/payrollService'
+import type { HistoryEntry } from '../services/logService'
+import { fetchHistory, insertHistory } from '../services/logService'
+import LogItem from '../components/LogItem'
+
 
 type ImportStatus = 'idle' | 'validating' | 'uploading' | 'done' | 'error'
 type SheetData = Record<string, any>[]
@@ -17,36 +15,6 @@ type SheetData = Record<string, any>[]
 interface RowError {
   rowIndex: number
   errors: string[]
-}
-
-interface HistoryEntry {
-  date: string
-  banco: string
-  arquivo: string
-  usuario: string
-  id?: number
-}
-
-interface EmployeePayload {
-  company: number | null
-  registration: number | null
-  name: string
-  cpf: string
-  date_birth: string | null
-  date_hiring: string | null
-  status: number | null
-  date_status: string | null
-  role: string | null
-  sector: string | null
-  nationality: string | null
-  education: string | null
-  sex: string | null
-  marital: string | null
-  ethnicity: string | null
-  salary: number | null
-  type_registration: string
-  user_registration: string | null
-  date_registration: string
 }
 
 interface TableLoadProps {
@@ -66,31 +34,37 @@ const TableLoad: React.FC<TableLoadProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [sheetType, setSheetType] = useState<'CADASTRO' | 'HORAS EXTRAS' | 'FOLHA PGTO' | ''>('')
+  const [sheetType, setSheetType] = useState<'CADASTRO' | 'FOLHA PGTO' | 'HORAS EXTRAS' | ''>('')
   const [status, setStatus] = useState<ImportStatus>('idle')
   const [progress, setProgress] = useState<number>(0)
   const [messages, setMessages] = useState<string[]>([])
   const [sheetData, setSheetData] = useState<SheetData>([])
+  const [columns, setColumns] = useState<string[]>([])
   const [sheetHeaderError, setSheetHeaderError] = useState<string[]>([])
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [importFinished, setImportFinished] = useState<boolean>(false)
+  const [showPreview, setShowPreview] = useState<boolean>(false)
+  const [neutralLogStyle, setNeutralLogStyle] = useState<boolean>(false)
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
 
   const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || importFinished
-
-  const resetFileInput = () => {
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
-
-  const isSupportedSheet = sheetType === 'CADASTRO'
+  const supportedSheets = ['CADASTRO', 'FOLHA PGTO'] as const
+  const isSupportedSheet = supportedSheets.includes(sheetType as any)
+  const isCadastro = sheetType === 'CADASTRO'
+  const isFolha = sheetType === 'FOLHA PGTO'
+  const requiredFolhaHeaders = ['cadastro', 'Colaborador', 'Evento', 'Pagamento', 'Referencia', 'valor']
 
   const statusLabel: Record<ImportStatus, string> = {
     idle: '',
-    validating: 'Validando planilha',
-    uploading: 'Enviando dados',
-    done: 'Concluido',
-    error: 'Erro',
+    validating: ' Validando planilha',
+    uploading: ' Enviando dados',
+    done: ' Concluido',
+    error: ' Erro',
+  }
+
+  const resetFileInput = () => {
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const pushMessage = (message: string) => {
@@ -103,6 +77,17 @@ const TableLoad: React.FC<TableLoadProps> = ({
     return match || null
   }
 
+  const formatDateFromDb = (value?: string | null) => {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value
+    const pad = (n: number) => String(n).padStart(2, '0')
+    // Converte para o fuso local do navegador (ou servidor) ao exibir
+    return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(
+      date.getMinutes()
+    )}`
+  }
+
   const formatNow = () => {
     const now = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
@@ -111,401 +96,267 @@ const TableLoad: React.FC<TableLoadProps> = ({
     )}`
   }
 
-  const formatDateFromDb = (value?: string | null) => {
-    if (!value) return '-'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
+  const getRefMonthYear = (value: any): string => {
+    if (!value) return ''
+    const raw = formatDate(value) // tenta normalizar dd/mm -> ISO
+    const d = new Date(raw || value)
+    if (Number.isNaN(d.getTime())) return ''
     const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(
-      date.getMinutes()
-    )}`
-  }
-
-  const parseNumber = (val: any): number | null => {
-    const num = Number(String(val).replace(/\D/g, ''))
-    return Number.isNaN(num) ? null : num
-  }
-
-  const parseDateIso = (val: any): string | null => {
-    const formatted = formatDate(val)
-    return formatted || null
-  }
-
-  const parseSalary = (val: any): number | null => {
-    if (!val && val !== 0) return null
-    const parsed = Number(String(val).replace(/[^\d,-]/g, '').replace(',', '.'))
-    return Number.isNaN(parsed) ? null : parsed
-  }
-
-  const fetchHistory = async () => {
-    if (!supabaseUrl || !supabaseKey) return
-    try {
-      const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
-      url.searchParams.set('select', 'id,registration,date_registration,file_,user_registration')
-      url.searchParams.set('order', 'date_registration.desc')
-      const res = await fetch(url.toString(), {
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          Prefer: 'return=minimal',
-        },
-      })
-      if (!res.ok) {
-        console.error('Erro ao buscar histórico', await res.text())
-        return
-      }
-      const data = (await res.json()) as Array<{
-        id: number
-        registration: string
-        date_registration: string
-        file_: string
-        user_registration: string
-      }>
-      setHistory(
-        data.map((item) => ({
-          id: item.id,
-          banco: item.registration,
-          date: formatDateFromDb(item.date_registration),
-          arquivo: item.file_,
-          usuario: item.user_registration,
-        }))
-      )
-    } catch (error) {
-      console.error('Erro ao buscar histórico', error)
-    }
-  }
-
-  const mapRowToEmployee = (row: Record<string, any>): EmployeePayload => {
-    return {
-      company: parseNumber(row['Empresa']),
-      registration: parseNumber(row['Cadastro']),
-      name: String(row['Nome'] || '').trim(),
-      cpf: formatCPF(row['CPF']),
-      date_birth: parseDateIso(row['Nascimento']),
-      date_hiring: parseDateIso(row['Admissão']),
-      status: parseNumber(row['Situação']),
-      date_status: parseDateIso(row['Data Afastamento']),
-      role: row['Título Reduzido (Cargo)'] ? String(row['Título Reduzido (Cargo)']).trim() : null,
-      sector: row['Descrição do Local'] ? String(row['Descrição do Local']).trim() : null,
-      nationality: row['Descrição (Nacionalidade)'] ? String(row['Descrição (Nacionalidade)']).trim() : null,
-      education: row['Descrição (Instrução)'] ? String(row['Descrição (Instrução)']).trim() : null,
-      sex: row['Sexo'] ? String(row['Sexo']).trim() : null,
-      marital: row['Descrição (Estado Civil)'] ? String(row['Descrição (Estado Civil)']).trim() : null,
-      ethnicity: row['Descrição (Raça/Etnia)'] ? String(row['Descrição (Raça/Etnia)']).trim() : null,
-      salary: parseSalary(row['Valor Salário']),
-      type_registration: 'importado',
-      user_registration: userName || null,
-      date_registration: new Date().toISOString(),
-    }
-  }
-
-  const insertEmployees = async (data: SheetData) => {
-    if (!supabaseUrl || !supabaseKey) {
-      pushMessage('❌ Supabase não configurado para salvar employee')
-      return { ok: false, newCount: 0, updatedCount: 0 }
-    }
-    try {
-      const payload: EmployeePayload[] = data.map(mapRowToEmployee)
-
-      // Buscar registros existentes para saber o que é novo x atualização
-      const existingUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-      existingUrl.searchParams.set('select', 'registration')
-      const existingRes = await fetch(existingUrl.toString(), {
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-        },
-      })
-      if (!existingRes.ok) {
-        console.error('Erro ao buscar registros existentes', await existingRes.text())
-        pushMessage('❌ Erro ao ler tabela employee')
-        return { ok: false, newCount: 0, updatedCount: 0 }
-      }
-      const existingData = (await existingRes.json()) as Array<{ registration: number }>
-      const existingSet = new Set(existingData.map((r) => r.registration))
-      let newCount = 0
-      let updatedCount = 0
-      const filtered = payload.filter((p) => p.registration !== null)
-      const toUpdate = filtered.filter((p) => p.registration !== null && existingSet.has(p.registration))
-      const toInsert = filtered.filter((p) => p.registration !== null && !existingSet.has(p.registration))
-      updatedCount = toUpdate.length
-      newCount = toInsert.length
-      if (filtered.length === 0) {
-        pushMessage('❌ Nenhuma linha com registro válido para employee')
-        return { ok: false, newCount: 0, updatedCount: 0 }
-      }
-
-      // Atualiza registros existentes
-      for (const entry of toUpdate) {
-        const updateUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-        updateUrl.searchParams.set('registration', `eq.${entry.registration}`)
-        const res = await fetch(updateUrl.toString(), {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify(entry),
-        })
-        if (!res.ok) {
-          const errTxt = await res.text()
-          console.error('Erro ao atualizar employee', errTxt)
-          pushMessage(`❌ Erro ao atualizar employee: ${errTxt.substring(0, 120)}`)
-          return { ok: false, newCount: 0, updatedCount: 0 }
-        }
-      }
-
-      // Inserir novos registros
-      if (toInsert.length > 0) {
-        const insertUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-        const resInsert = await fetch(insertUrl.toString(), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify(toInsert),
-        })
-        if (!resInsert.ok) {
-          const errTxt = await resInsert.text()
-          console.error('Erro ao inserir employee', errTxt)
-          pushMessage(`❌ Erro ao inserir employee: ${errTxt.substring(0, 120)}`)
-          return { ok: false, newCount: 0, updatedCount: 0 }
-        }
-      }
-
-      pushMessage(`Sua operação gerou: ${updatedCount} atualizados, ${newCount} inseridos.`)
-      return { ok: true, newCount, updatedCount }
-    } catch (error) {
-      console.error('Erro ao salvar employee', error)
-      pushMessage('❌ Erro ao gravar tabela employee (ver console)')
-      return { ok: false, newCount: 0, updatedCount: 0 }
-    }
-  }
-
-  const renderMessage = (msg: string) => {
-    // Destaca o sufixo entre parênteses (ex.: campos com problema) em amarelo/verm.
-    const warningMatch = msg.match(/^(.*-)\s*\(\s*([^)]+)\s*\)(.*)$/)
-    if (warningMatch) {
-      const [, before, suffix, after] = warningMatch
-      return (
-        <span className="text-xs">
-          {before} <span className="text-amber-300">( {suffix} )</span>
-          {after}
-        </span>
-      )
-    }
-    if (msg.trim().startsWith('❌')) {
-      const firstParen = msg.indexOf('(')
-      const lastParen = msg.lastIndexOf(')')
-      if (firstParen !== -1 && lastParen !== -1 && lastParen > firstParen) {
-        const before = msg.slice(0, firstParen).trimEnd()
-        const suffix = msg.slice(firstParen + 1, lastParen)
-        const after = msg.slice(lastParen + 1)
-        return (
-          <span className="text-xs">
-            {before} <span className="text-rose-400">( {suffix} )</span>
-            {after}
-          </span>
-        )
-      }
-    }
-    return <span className="text-xs">{msg}</span>
+    return `${pad(d.getMonth() + 1)}/${d.getFullYear()}`
   }
 
   useEffect(() => {
+    ;(async () => {
+      const list = await fetchHistory(supabaseUrl, supabaseKey)
+      setHistory(
+        list.map((item) => ({
+          ...item,
+          date: formatDateFromDb(item.date),
+        }))
+      )
+    })()
+  }, [supabaseKey, supabaseUrl])
+
+  useEffect(() => {
+    setShowPreview(false)
     setSelectedFile(null)
     setSheetData([])
     setSheetHeaderError([])
     setImportFinished(false)
-    setStatus('idle')
+    setStatus('idle'); setNeutralLogStyle(true)
+    setNeutralLogStyle(false)
     setProgress(0)
-    setMessages([])
+    setColumns([])
     resetFileInput()
-    if (sheetType && sheetType !== 'CADASTRO') {
-      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+    if (sheetType && !isSupportedSheet) {
+      pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
     }
-  }, [sheetType])
-
-  useEffect(() => {
-    fetchHistory()
-  }, [])
+  }, [sheetType, isSupportedSheet])
 
   const handleFileSelect = (file: File | null) => {
-    if (sheetType && sheetType !== 'CADASTRO') {
-      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+    if (!isSupportedSheet) {
+      pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
       setSelectedFile(null)
       setSheetData([])
+      setColumns([])
       resetFileInput()
-      setStatus('idle')
+      setStatus('idle'); setNeutralLogStyle(true)
+      setNeutralLogStyle(false)
       setProgress(0)
       return
     }
     setSelectedFile(file)
     setProgress(0)
-    setStatus('idle')
+    setStatus('idle'); setNeutralLogStyle(true)
+    setNeutralLogStyle(false)
     setMessages([])
     setSheetData([])
+    setColumns([])
     setImportFinished(false)
+    setShowPreview(false)
     if (file) {
       pushMessage(`Arquivo selecionado: ${file.name}`)
-      // Ler automaticamente o arquivo ao selecionar
       readExcelFile(file)
     }
   }
 
   const readExcelFile = (file: File) => {
-    if (sheetType && sheetType !== 'CADASTRO') {
-      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+    if (!isSupportedSheet) {
+      pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
       setSheetData([])
       resetFileInput()
       setSelectedFile(null)
-      setStatus('idle')
+      setStatus('idle'); setNeutralLogStyle(true)
       setProgress(0)
+      setColumns([])
       return
     }
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const data = e.target?.result as ArrayBuffer
         const workbook = XLSX.read(data, { type: 'array' })
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
         const jsonData = XLSX.utils.sheet_to_json(firstSheet) as SheetData
-        
+
         setImportFinished(false)
-        
+
         if (jsonData.length === 0) {
-          pushMessage('Arquivo vazio.')
+          pushMessage('XxX Arquivo vazio.')
           setSheetData([])
           setSheetHeaderError([])
           return
         }
 
         const cols = Object.keys(jsonData[0] || {})
-        
-        // Validar headers obrigatórios
-        const headerValidation = validateEmployeeSheet(cols)
-        if (!headerValidation.valid) {
-          setSheetHeaderError(headerValidation.missingFields)
-          const missing = headerValidation.missingFields.join(', ')
-          pushMessage(`❌ Campos obrigatórios faltando: (${missing})`)
-          setSheetData([])
-          return
-        }
-
-        // Headers válidos, limpar erro
-        setSheetHeaderError([])
-        pushMessage(`Headers validados: ${cols.length} coluna(s)`)
-
-        // Validar dados de cada linha
-        const rowErrors: RowError[] = []
-        jsonData.forEach((row, index) => {
-          const validation = validateEmployeeRow(row)
-          if (!validation.valid) {
-            rowErrors.push({
-              rowIndex: index + 2, // +2 pois começa em 1 e há header
-              errors: validation.errors,
-            })
+        if (isCadastro) {
+          const headerValidation = validateEmployeeSheet(cols)
+          if (!headerValidation.valid) {
+            setSheetHeaderError(headerValidation.missingFields)
+            const missing = headerValidation.missingFields.join(', ')
+            pushMessage(`XxX Campos obrigatorios faltando: (${missing})`)
+            setStatus('error'); setNeutralLogStyle(true)
+            setSheetData([])
+            setColumns([])
+            return
           }
-        })
+        } else if (isFolha) {
+          const missingFolha = requiredFolhaHeaders.filter((h) => !cols.includes(h))
+          if (missingFolha.length > 0) {
+            setSheetHeaderError(missingFolha)
+            pushMessage(`XxX Campos obrigatorios faltando: (${missingFolha.join(', ')})`)
+            setStatus('error'); setNeutralLogStyle(true)
+            setSheetData([])
+            setColumns([])
+            return
+          }
+          setSheetHeaderError([])
+          pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
 
-        if (rowErrors.length > 0) {
-          const errorFields = new Set<string>()
-          rowErrors.forEach((rowErr) => {
-            rowErr.errors.forEach((msg) => {
-              const field = extractFieldFromError(msg)
-              if (field) errorFields.add(field)
-            })
-          })
-          const fieldsText = Array.from(errorFields).join(', ')
-          const suffix = fieldsText ? ` ( ${fieldsText})` : ''
-          pushMessage(`⚠️  ${rowErrors.length} linha(s) - ${suffix} corrigidos e validado!`)
+          const regNumbers = Array.from(
+            new Set(
+              jsonData
+                .map((row) => Number(String(row['cadastro'] ?? '').replace(/\D/g, '')))
+                .filter((n) => !Number.isNaN(n))
+            )
+          )
+          const employeeRegs = await fetchEmployeeRegistrations(supabaseUrl, supabaseKey)
+          if (!employeeRegs.ok) {
+            pushMessage('XxX Erro ao validar colaboradores (employee).')
+            setSheetData([])
+            setColumns([])
+            setStatus('error'); setNeutralLogStyle(true)
+            return
+          }
+          const missingRegs = regNumbers.filter((r) => !employeeRegs.registrations.has(r))
+          if (missingRegs.length > 0) {
+            pushMessage(`XxX Colaboradores nao encontrado: (${missingRegs.join(', ')})`)
+            setSheetData([])
+            setColumns([])
+            setStatus('error'); setNeutralLogStyle(true)
+            setImportFinished(false)
+            return
+          }
         } else {
-          pushMessage(`Todas as ${jsonData.length} linhas validadas com sucesso`)
+          setSheetHeaderError([])
+          pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
+        }
+        if (isCadastro) {
+          const rowErrors: RowError[] = []
+          jsonData.forEach((row, index) => {
+            const validation = validateEmployeeRow(row)
+            if (!validation.valid) {
+              rowErrors.push({
+                rowIndex: index + 2,
+                errors: validation.errors,
+              })
+            }
+          })
+
+          if (rowErrors.length > 0) {
+            const errorFields = new Set<string>()
+            rowErrors.forEach((rowErr) => {
+              rowErr.errors.forEach((msg) => {
+                const field = extractFieldFromError(msg)
+                if (field) errorFields.add(field)
+              })
+            })
+            const fieldsText = Array.from(errorFields).join(', ')
+            const suffix = fieldsText ? ` (${fieldsText})` : ''
+            pushMessage(`:) ${rowErrors.length} linha(s) - ${suffix} corrigidas/validadas!`)
+          } else {
+            pushMessage(`OoO Todas as ${jsonData.length} linhas validadas com sucesso`)
+          }
+        } else {
+          // Validacao simples para FOLHA PGTO: campos obrigatorios NAO vazios
+          const folhaRowErrors: RowError[] = []
+          jsonData.forEach((row, index) => {
+            const missingFields: string[] = []
+            requiredFolhaHeaders.forEach((field) => {
+              if (!row[field] || String(row[field]).trim() === '') missingFields.push(field)
+            })
+            if (missingFields.length > 0) {
+              folhaRowErrors.push({
+                rowIndex: index + 2,
+                errors: missingFields.map((f) => `${f} Sao obrigatorio`),
+              })
+            }
+          })
+
+          if (folhaRowErrors.length > 0) {
+            const errorFields = new Set<string>()
+            folhaRowErrors.forEach((rowErr) => {
+              rowErr.errors.forEach((msg) => {
+                const field = requiredFolhaHeaders.find((f) => msg.startsWith(f))
+                if (field) errorFields.add(field)
+              })
+            })
+            const fieldsText = Array.from(errorFields).join(', ')
+            const suffix = fieldsText ? ` (${fieldsText})` : ''
+            pushMessage(`:) ${folhaRowErrors.length} linha(s) - ${suffix} corrigidas/validadas!`)
+          } else {
+            pushMessage(`OoO Todas as ${jsonData.length} linhas validadas com sucesso`)
+          }
         }
 
         setSheetData(jsonData)
-        pushMessage(`✅ ${jsonData.length} linha(s) pronta pra ser enviada ao servidor`)
+        if (isCadastro) {
+          const displayColumns = REQUIRED_FIELDS.filter((field) => cols.includes(field))
+          setColumns(displayColumns)
+        } else if (isFolha) {
+          const folhaOrder = ['cadastro', 'Colaborador', 'Evento', 'Pagamento', 'Referencia', 'valor']
+          const ordered = folhaOrder.filter((c) => cols.includes(c))
+          const remaining = cols.filter((c) => !ordered.includes(c))
+          // Converter campos numumeros para inteiro
+          const normalized = jsonData.map((row) => {
+            const cadastroNum = row['cadastro'] ? Number(String(row['cadastro']).replace(/\D/g, '')) : row['cadastro']
+            const eventoNum = row['Evento'] ? Number(String(row['Evento']).replace(/\D/g, '')) : row['Evento']
+            const valorNum = row['valor']
+              ? Number(String(row['valor']).replace(/[^\d,-]/g, '').replace(',', '.'))
+              : row['valor']
+            const valorFormatado =
+              typeof valorNum === 'number' && !Number.isNaN(valorNum)
+                ? valorNum.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+                : row['valor']
+            return {
+              ...row,
+              cadastro: cadastroNum,
+              Evento: eventoNum,
+              valor: valorFormatado,
+            }
+          })
+          setSheetData(normalized)
+          setColumns([...ordered, ...remaining])
+        } else {
+          setColumns(Object.keys(jsonData[0] || {}))
+        }
+        if (!isFolha) setSheetData(jsonData)
+        pushMessage(`OoO ${jsonData.length} linha(s) pronta pra ser enviada ao servidor`)
       } catch (error) {
         console.error('Erro ao ler arquivo:', error)
-        pushMessage('❌ Erro ao ler o arquivo.')
+        pushMessage('Erro ao ler o arquivo.')
         setSheetData([])
         setSheetHeaderError([])
+        setColumns([])
       }
     }
     reader.readAsArrayBuffer(file)
   }
 
-  const insertHistory = async (entry: { registration: string; date: string; file: string; user: string }) => {
-    if (!supabaseUrl || !supabaseKey) {
-      console.error('Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_KEY)')
-      return false
-    }
-    try {
-      const maxLen = 50
-      const truncate = (value: string) => (value.length > maxLen ? value.slice(0, maxLen) : value)
-      const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
-      const payload = {
-        registration: truncate(entry.registration),
-        // Gravando com horário completo (timestamptz no banco)
-        date_registration: new Date().toISOString(),
-        file_: truncate(entry.file),
-        user_registration: truncate(entry.user),
-      }
-      const res = await fetch(url.toString(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          Prefer: 'return=representation',
-        },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        const errTxt = await res.text()
-        console.error('Erro ao gravar histórico', errTxt)
-        pushMessage('❌ Erro ao gravar log no banco')
-        return false
-      }
-      const [created] = (await res.json()) as Array<{
-        id: number
-        registration: string
-        date_registration: string
-        file_: string
-        user_registration: string
-      }>
-      if (created) {
-        await fetchHistory()
-        return true
-      }
-      pushMessage('❌ Erro ao gravar log no banco')
-      return false
-    } catch (error) {
-      console.error('Erro ao gravar histórico', error)
-      pushMessage('❌ Erro ao gravar log no banco')
-      return false
-  }
-  }
-
   const simulateImport = async () => {
     if (!sheetType) {
-      setStatus('error')
+      setStatus('idle'); setNeutralLogStyle(true)
       pushMessage('Escolha o tipo de planilha antes de importar.')
       return
     }
     if (!selectedFile) {
-      setStatus('error')
+      setStatus('idle'); setNeutralLogStyle(true)
       pushMessage('Selecione um arquivo antes de importar.')
       return
     }
     if (!isSupportedSheet) {
-      setStatus('error')
-      pushMessage(`❌ Regras para "${sheetType}" ainda não implementadas.`)
+      setStatus('idle'); setNeutralLogStyle(true)
+      pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
       return
     }
 
@@ -514,7 +365,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     try {
       setStatus('validating')
       setProgress(20)
-      pushMessage(`Validando a planilha "${selectedFile.name}" para ser envida ao Servidor`)
+      pushMessage(`Validando a planilha "${selectedFile.name}"...`)
       await sleep(600)
 
       setStatus('uploading')
@@ -522,26 +373,63 @@ const TableLoad: React.FC<TableLoadProps> = ({
       pushMessage('Enviando dados para o servidor...')
       await sleep(900)
 
-      const employeeResult = await insertEmployees(sheetData)
-      if (!employeeResult.ok) {
-        setStatus('error')
-        pushMessage('❌ Falha ao gravar tabela employee. Log não enviado.')
-        setImportFinished(false)
-        return
+      if (isCadastro) {
+        const employeeResult = await insertEmployees(sheetData, userName, supabaseUrl, supabaseKey)
+        if (!employeeResult.ok) {
+          setStatus('idle'); setNeutralLogStyle(true)
+          pushMessage('XxX Falha ao gravar tabela employee. Log NAO enviado.')
+          setImportFinished(false)
+          return
+        }
+        pushMessage(`OoO Employee: ${employeeResult.updatedCount} atualizados, ${employeeResult.newCount} inseridos.`)
+      } else if (isFolha) {
+        const payrollResult = await insertPayroll(sheetData, userName, supabaseUrl, supabaseKey)
+        if (!payrollResult.ok) {
+          setStatus('idle'); setNeutralLogStyle(true)
+          pushMessage(`XxX Erro ao gravar tabela payroll: ${payrollResult.error || 'erro desconhecido'}`)
+          setImportFinished(false)
+          return
+        }
+        pushMessage(`OoO Payroll: ${payrollResult.inserted} linha(s) inseridas.`)
+        await insertHistory(
+          {
+            registration: `Folha Pgto Ref.: ${getRefMonthYear(sheetData[0]?.['Pagamento']) || '-'}`,
+            date: formatNow(),
+            file: selectedFile?.name || '-',
+            user: userName || '-',
+          },
+          supabaseUrl,
+          supabaseKey
+        )
       }
+
       setStatus('done')
       setProgress(100)
-      pushMessage('✅ Importação concluída com sucesso.')
-      await insertHistory({
-        registration: sheetType === 'CADASTRO' ? 'Cadastro de Funcionário' : sheetType || '-',
-        date: formatNow(),
-        file: selectedFile?.name || '-',
-        user: userName || '-',
-      })
+      pushMessage('OoO Carga da tabela concluida com sucesso.')
+
+      if (isCadastro) {
+        await insertHistory(
+          {
+            registration: 'Cadastro de Funcionario',
+            date: formatNow(),
+            file: selectedFile?.name || '-',
+            user: userName || '-',
+          },
+          supabaseUrl,
+          supabaseKey
+        )
+      }
+      const list = await fetchHistory(supabaseUrl, supabaseKey)
+      setHistory(
+        list.map((item) => ({
+          ...item,
+          date: formatDateFromDb(item.date),
+        }))
+      )
       setImportFinished(true)
     } catch (error) {
       console.error('Erro na importacao simulada:', error)
-      setStatus('error')
+      setStatus('idle'); setNeutralLogStyle(true)
       pushMessage('Erro ao importar. Tente novamente.')
       setImportFinished(false)
     }
@@ -550,12 +438,14 @@ const TableLoad: React.FC<TableLoadProps> = ({
   const resetForm = () => {
     setSelectedFile(null)
     setSheetType('')
-    setStatus('idle')
+    setStatus('idle'); setNeutralLogStyle(true)
     setProgress(0)
     setMessages([])
     setSheetData([])
     setSheetHeaderError([])
     setImportFinished(false)
+    setColumns([])
+    resetFileInput()
   }
 
   const getStatusColor = () => {
@@ -565,10 +455,11 @@ const TableLoad: React.FC<TableLoadProps> = ({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-white text-2xl font-bold leading-tight">{title}</h2>
+    <>
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-white text-2xl font-bold leading-tight">{title}</h2>
           <p className="text-white/70 text-sm mt-1">{description}</p>
         </div>
 
@@ -592,7 +483,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Coluna Esquerda - Formulário */}
         <div className="lg:col-span-6 bg-slate-900/70 border border-white/10 rounded-xl p-4 space-y-4">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
@@ -614,37 +504,61 @@ const TableLoad: React.FC<TableLoadProps> = ({
               )}
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 items-end">
-              <div className="flex-1">
+            <div className="flex flex-row items-end gap-3 flex-nowrap overflow-x-auto">
+              <div className="flex-1 min-w-[200px]">
                 <label className="block text-xs text-white/70 mb-1">Tipo de planilha</label>
                 <select
                   value={sheetType}
                   onChange={(e) => setSheetType(e.target.value as any)}
                   className="w-full bg-white/5 text-white text-sm border border-white/10 rounded-lg px-3 py-2 outline-none focus:border-emerald-400"
                 >
-                  <option value="" className="bg-[#202422] text-white">Selecione</option>
-                  <option value="CADASTRO" className="bg-[#202422] text-white">CADASTRO</option>
-                  <option value="FOLHA PGTO" className="bg-[#202422] text-white">FOLHA PGTO</option>
-                  <option value="HORAS EXTRAS" className="bg-[#202422] text-white">HORAS EXTRAS</option>
+                  <option value="" className="bg-[#202422] text-white">
+                    Selecione
+                  </option>
+                  <option value="CADASTRO" className="bg-[#202422] text-white">
+                    CADASTRO
+                  </option>
+                  <option value="FOLHA PGTO" className="bg-[#202422] text-white">
+                    FOLHA PGTO
+                  </option>
+                  <option value="HORAS EXTRAS" className="bg-[#202422] text-white">
+                    HORAS EXTRAS
+                  </option>
                 </select>
               </div>
-              {sheetType === 'CADASTRO' && (
+              <div className="flex items-center gap-3 shrink-0">
+                {(sheetType === 'CADASTRO' || sheetType === 'FOLHA PGTO') && (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-2 rounded-md bg-transparent border border-emerald-500/60 text-emerald-300 font-semibold hover:bg-emerald-500/20 hover:border-emerald-400/80 transition-all flex items-center gap-2 whitespace-nowrap"
+                    title="Selecionar arquivo para upload"
+                  >
+                    <Upload className="w-5 h-5" />
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-2 rounded-md bg-transparent border border-emerald-500/60 text-emerald-300 font-semibold hover:bg-emerald-500/20 hover:border-emerald-400/80 transition-all flex items-center gap-2 whitespace-nowrap"
+                  className="px-3 py-2 rounded-md bg-transparent border border-purple-400/70 text-purple-300 font-semibold hover:bg-purple-500/15 hover:border-purple-300/90 transition-all flex items-center gap-2 whitespace-nowrap"
+                  title="Ver tabela?"
                 >
-                  <Upload className="w-5 h-5" />
-                  Upload
+                  <input
+                    type="checkbox"
+                    className="w-5 h-5 accent-purple-500 bg-transparent border border-purple-400 rounded-sm focus:outline-none"
+                    aria-label="Acao futura"
+                    checked={showPreview}
+                    onChange={(e) => setShowPreview(e.target.checked)}
+                  />
                 </button>
-              )}
+              </div>
             </div>
           </div>
 
           <div
-            className={`border-2 border-dashed rounded-md p-2 flex flex-col items-center justify-center gap-3 ${
-              status === 'error' ? 'border-amber-400/60 bg-amber-500/5' : 'border-white/15 bg-white/5'
+            className={`border-2 border-dashed rounded-md p-2 flex flex-col items-center justify-start gap-3 ${
+              status === 'error' && !neutralLogStyle ? 'border-amber-400/60 bg-amber-500/5' : 'border-white/15 bg-white/5'
             }`}
+            style={{ maxHeight: '260px' }}
           >
             <input
               ref={fileInputRef}
@@ -653,30 +567,31 @@ const TableLoad: React.FC<TableLoadProps> = ({
               accept=".xlsx,.xls,.csv"
               onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
             />
-            {/* Log rápido */}
-            <div className="w-full space-y-2 max-h-[240px] overflow-y-auto pr-2">
+            <div className="w-full space-y-2 max-h-[200px] overflow-y-auto pr-2">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-300" />
-                <p className="text-white font-semibold">Log rápido</p>
+                <p className="text-white font-semibold">Log ...</p>
               </div>
               {messages.length === 0 ? (
                 <p className="text-white/60 text-sm">Nenhuma mensagem ainda.</p>
               ) : (
-                <ul className="text-white/80 text-sm space-y-1 max-h-[200px] overflow-y-auto">
-                  {messages.map((msg, idx) => (
-                    <li key={idx} className="flex items-start">
-                      {renderMessage(msg)}
-                    </li>
-                  ))}
+                <ul className="text-white/80 text-sm space-y-1">
+{messages.map((msg, idx) => (
+  <li key={idx}>
+    <LogItem message={msg} />
+  </li>
+))}
+
                 </ul>
               )}
             </div>
-            
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm text-white/70">
-              <span>Status: <span className={getStatusColor()}>{statusLabel[status]}</span></span>
+              <span>
+                Status: <span className={getStatusColor()}>{statusLabel[status]}</span>
+              </span>
               <span>{progress}%</span>
             </div>
             <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
@@ -716,23 +631,22 @@ const TableLoad: React.FC<TableLoadProps> = ({
           </div>
         </div>
 
-        {/* Coluna Direita - Checklist Expandido com Tabela */}
         <div className="lg:col-span-6 lg:sticky lg:top-24">
           <div className="bg-slate-900/70 border border-white/10 rounded-xl overflow-x-auto h-full">
             <table className="w-full text-xs">
-              <thead className="bg-purple-300/10">
+              <thead className="bg-purple-300/20">
                 <tr className="border-b border-white/10">
                   <th className="px-1 py-1.5 text-white/70 font-semibold text-center">DATA</th>
-                  <th className="text-left px-1 py-1.5 text-white/70 font-semibold">BANCO</th>
-                  <th className="text-left px-1 py-1.5 text-white/70 font-semibold">ARQUIVO</th>
-                  <th className="text-left px-1 py-1.5 text-white/70 font-semibold">USUÁRIO</th>
+                  <th className="px-1 py-1.5 text-white/70 font-semibold text-center">BANCO</th>
+                  <th className="px-1 py-1.5 text-white/70 font-semibold text-center">ARQUIVO</th>
+                  <th className="px-1 py-1.5 text-white/70 font-semibold text-center">USUARIO</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10">
                 {history.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-1 py-3 text-white/50 text-xs text-center">
-                      Nenhum registro de importação ainda.
+                      Nenhum registro de Carga da tabela ainda.
                     </td>
                   </tr>
                 ) : (
@@ -750,9 +664,54 @@ const TableLoad: React.FC<TableLoadProps> = ({
           </div>
         </div>
       </div>
+      </div>
 
-      {/* Preview de dados ocultado conforme solicitado */}
-    </div>
+      {showPreview && sheetData.length > 0 && (
+        <div className="bg-slate-900/70 border border-white/10 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2 mb-2">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
+            <p className="text-white font-semibold">Dados carregados ({sheetData.length} linha(s))</p>
+          </div>
+          <div className="overflow-x-auto border border-white/10 rounded-lg max-h-[300px] overflow-y-auto">
+            <table className="w-full text-[11px] text-white/80">
+              <thead className="bg-lime-400/20 border-b border-white/10 sticky top-0 z-20 text-slate-900">
+                <tr>
+                  {columns.map((col) => (
+                    <th
+                      key={col}
+                      className="px-3 py-2 font-semibold text-white/90 uppercase tracking-wide text-center"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sheetData.map((row, idx) => (
+                  <tr key={idx} className={idx % 2 === 0 ? 'bg-white/5' : 'bg-transparent'}>
+                    {columns.map((col) => {
+                      const colKey = col.toLowerCase()
+                      const isValor = isFolha && colKey === 'valor'
+                      const isCenter =
+                        isFolha && ['cadastro', 'evento', 'pagamento', 'Referencia'].includes(colKey)
+                      const alignClass = isValor ? 'text-right' : isCenter ? 'text-center' : 'text-left'
+                      return (
+                        <td
+                          key={`${idx}-${col}`}
+                          className={`px-3 py-2 text-white/70 truncate max-w-xs ${alignClass}`}
+                        >
+                          {row[col] ?? '-'}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
