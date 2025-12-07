@@ -2,6 +2,7 @@ export interface HistoryEntry {
   id?: number
   date: string
   banco: string
+  acao: string
   arquivo: string
   usuario: string
 }
@@ -13,7 +14,7 @@ export const fetchHistory = async (
   if (!supabaseUrl || !supabaseKey) return []
   try {
     const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
-    url.searchParams.set('select', 'id,registration,date_registration,file_,user_registration')
+    url.searchParams.set('select', 'id,registration,actions,date_registration,file_,user_registration')
     url.searchParams.set('order', 'date_registration.desc')
     const res = await fetch(url.toString(), {
       headers: {
@@ -29,6 +30,7 @@ export const fetchHistory = async (
     const data = (await res.json()) as Array<{
       id: number
       registration: string
+      actions : string
       date_registration: string
       file_: string
       user_registration: string
@@ -36,6 +38,7 @@ export const fetchHistory = async (
     return data.map((item) => ({
       id: item.id,
       banco: item.registration,
+      acao : item.actions,
       date: item.date_registration,
       arquivo: item.file_,
       usuario: item.user_registration,
@@ -47,7 +50,7 @@ export const fetchHistory = async (
 }
 
 export const insertHistory = async (
-  entry: { registration: string; date: string; file: string; user: string },
+  entry: { registration: string; actions: string; date: string; file: string; user: string },
   supabaseUrl?: string,
   supabaseKey?: string
 ): Promise<boolean> => {
@@ -58,6 +61,7 @@ export const insertHistory = async (
     const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
     const payload = {
       registration: entry.registration,
+      actions: entry.actions,
       // Usa timestamp atual do servidor/cliente em ISO para preservar data e hora completas
       date_registration: new Date().toISOString(),
       file_: entry.file,

@@ -1,9 +1,23 @@
-ï»¿import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { ArrowLeft, Circle, CircleCheckBig, ClipboardList, FileSpreadsheet, Loader2, Upload, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  Circle,
+  CircleCheckBig,
+  ClipboardList,
+  FileSpreadsheet,
+  Loader2,
+  TriangleAlert,
+  Upload,
+  X,
+} from 'lucide-react'
 import { validateEmployeeSheet, validateEmployeeRow, REQUIRED_FIELDS, formatDate } from '../utils/employeeParser'
 import { insertEmployees, fetchEmployeeRegistrations } from '../services/employeeService'
-import { insertPayroll } from '../services/payrollService'
+import { checkPayrollMonthExists, deletePayrollByMonth, insertPayroll } from '../services/payrollService'
+import { loadSession } from '../services/sessionService'
+import { verifyPassword } from '../services/authService'
 import type { HistoryEntry } from '../services/logService'
 import { fetchHistory, insertHistory } from '../services/logService'
 import LogItem from '../components/LogItem'
@@ -45,8 +59,13 @@ const TableLoad: React.FC<TableLoadProps> = ({
   const [importFinished, setImportFinished] = useState<boolean>(false)
   const [showPreview, setShowPreview] = useState<boolean>(false)
   const [neutralLogStyle, setNeutralLogStyle] = useState<boolean>(false)
+  const [payrollConflictRef, setPayrollConflictRef] = useState<string | null>(null)
+  const [payrollConflictPassword, setPayrollConflictPassword] = useState<string>('')
+  const [payrollPasswordErrorType, setPayrollPasswordErrorType] = useState<'required' | 'invalid' | null>(null)
+  const [payrollPasswordAttempts, setPayrollPasswordAttempts] = useState<number>(0)
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
+  const sessionUser = loadSession()
 
   const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || importFinished
   const supportedSheets = ['CADASTRO', 'FOLHA PGTO'] as const
@@ -69,6 +88,9 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
   const pushMessage = (message: string) => {
     setMessages((prev) => [message, ...prev].slice(0, 6))
+    if (message.startsWith('XxX')) {
+      setSheetType('')
+    }
   }
 
   const extractFieldFromError = (errorMsg: string): string | null => {
@@ -103,6 +125,14 @@ const TableLoad: React.FC<TableLoadProps> = ({
     if (Number.isNaN(d.getTime())) return ''
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${pad(d.getMonth() + 1)}/${d.getFullYear()}`
+  }
+
+  const refToIsoDate = (ref?: string | null) => {
+    if (!ref) return ''
+    const [month, year] = ref.split('/')
+    if (!month || !year) return ''
+    const mm = month.padStart(2, '0')
+    return `${year}-${mm}-01`
   }
 
   useEffect(() => {
@@ -237,10 +267,33 @@ const TableLoad: React.FC<TableLoadProps> = ({
             setImportFinished(false)
             return
           }
+
+          const paymentValue = jsonData[0]?.['Pagamento']
+          const payrollCheck = await checkPayrollMonthExists(paymentValue, supabaseUrl, supabaseKey)
+          const refMonth = getRefMonthYear(paymentValue) || '-'
+          if (!payrollCheck.ok) {
+            pushMessage(`XxX Erro ao verificar folha ref. ${refMonth}.`)
+            setSheetData([])
+            setColumns([])
+            setStatus('error'); setNeutralLogStyle(true)
+            setImportFinished(false)
+            return
+          }
+          if (payrollCheck.exists) {
+            const text = `:) Pagamento ref. ${refMonth} ja consta em payroll.`
+            pushMessage(text)
+            setPayrollConflictRef(refMonth)
+            setStatus('idle'); setNeutralLogStyle(true)
+            setImportFinished(false)
+            return
+          }
         } else {
           setSheetHeaderError([])
           pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
         }
+        let payrollConflict = false
+        let payrollConflictRefValue = ''
+
         if (isCadastro) {
           const rowErrors: RowError[] = []
           jsonData.forEach((row, index) => {
@@ -327,10 +380,27 @@ const TableLoad: React.FC<TableLoadProps> = ({
           })
           setSheetData(normalized)
           setColumns([...ordered, ...remaining])
+          payrollConflictRefValue = getRefMonthYear(jsonData[0]?.['Pagamento']) || '-'
+          const payrollCheck = await checkPayrollMonthExists(jsonData[0]?.['Pagamento'], supabaseUrl, supabaseKey)
+          if (!payrollCheck.ok) {
+            pushMessage(`XxX Erro ao verificar folha ref. ${payrollConflictRefValue}.`)
+            setStatus('error'); setNeutralLogStyle(true)
+            setImportFinished(false)
+            return
+          }
+          payrollConflict = payrollCheck.exists
         } else {
           setColumns(Object.keys(jsonData[0] || {}))
         }
         if (!isFolha) setSheetData(jsonData)
+        if (payrollConflict) {
+          const text = `:) Pagamento ref. ${payrollConflictRefValue} ja consta em payroll.`
+          pushMessage(text)
+          setPayrollConflictRef(payrollConflictRefValue)
+          setStatus('idle'); setNeutralLogStyle(true)
+          setImportFinished(false)
+          return
+        }
         pushMessage(`OoO ${jsonData.length} linha(s) pronta pra ser enviada ao servidor`)
       } catch (error) {
         console.error('Erro ao ler arquivo:', error)
@@ -394,6 +464,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
         await insertHistory(
           {
             registration: `Folha Pgto Ref.: ${getRefMonthYear(sheetData[0]?.['Pagamento']) || '-'}`,
+            actions: 'IMPORTACAO',
             date: formatNow(),
             file: selectedFile?.name || '-',
             user: userName || '-',
@@ -411,6 +482,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
         await insertHistory(
           {
             registration: 'Cadastro de Funcionario',
+            actions: 'IMPORTACAO',
             date: formatNow(),
             file: selectedFile?.name || '-',
             user: userName || '-',
@@ -452,6 +524,20 @@ const TableLoad: React.FC<TableLoadProps> = ({
     if (status === 'error') return 'text-amber-300'
     if (status === 'done') return 'text-emerald-300'
     return 'text-white/80'
+  }
+
+  const renderActionIcon = (acao?: string) => {
+    const value = (acao || '').toLowerCase()
+    if (value === 'inclusao' || value === 'inclusão') {
+      return <Check className="w-4 h-4 text-emerald-400 mx-auto" />
+    }
+    if (value === 'delete' || value === 'exclusao' || value === 'exclusão') {
+      return <X className="w-4 h-4 text-rose-400 mx-auto" />
+    }
+    if (value === 'alterou' || value === 'alteracao' || value === 'alteração' || value === 'update') {
+      return <TriangleAlert className="w-4 h-4 text-amber-400 mx-auto" />
+    }
+    return <span className="text-white/70 text-[11px] text-center block">{acao || '-'}</span>
   }
 
   return (
@@ -555,7 +641,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
               accept=".xlsx,.xls,.csv"
               onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
             />
-            <div className="w-full h-full flex flex-col gap-2">
+            <div className="w-full h-full flex flex-col gap-0">
               <div className="flex items-center justify-between gap-4 px-2 py-2 border-b border-white/10">
                 <div className="flex items-center gap-2">
                   <CircleCheckBig className="w-4 h-4 text-emerald-300" />
@@ -577,7 +663,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
                 </button>
               </div>
               <div
-                className="custom-scroll log-scroll flex-1 min-h-0 max-h-[120px] overflow-y-auto rounded-md"
+                className="custom-scroll log-scroll flex-1 min-h-0 max-h-[135px] overflow-y-auto"
               >
                 <ul className="text-white/80 text-xs space-y-1 list-none p-0 m-0">
                   <li className="text-white/50" aria-label="Aguardando novas mensagens">
@@ -641,29 +727,31 @@ const TableLoad: React.FC<TableLoadProps> = ({
         <div className="lg:col-span-6 lg:sticky lg:top-24">
             <div className="bg-slate-900/70 border border-white/10 rounded-xl h-full overflow-hidden">
             <div className="overflow-x-auto overflow-y-auto max-h-[440px] min-h-0 custom-scroll">
-              <table className="w-full text-xs">
+              <table className="w-full text-[11px]">
                 <thead className="sticky top-0 z-10 bg-emerald-800/95">
                   <tr className="border-b border-white/10">
                     <th className="px-1 py-1.5 text-white/70 font-semibold text-center">DATA</th>
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-center">BANCO</th>
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-center">ARQUIVO</th>
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-center">USUARIO</th>
+                    <th className="px-1 py-1.5 text-white/70 font-semibold text-left">BANCO DADOS</th>
+                    <th className="px-1 py-1.5 text-white/70 font-semibold text-center">ACAO</th>
+                    <th className="px-1 py-1.5 text-white/70 font-semibold text-left">ARQUIVO</th>
+                    <th className="px-1 py-1.5 text-white/70 font-semibold text-left">USUARIO</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/10">
+                <tbody className="divide-y divide-white/10 text-[11px]">
                   {history.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-1 py-3 text-white/50 text-xs text-center">
+                      <td colSpan={5} className="px-1 py-3 text-white/50 text-xs text-center">
                         Nenhum registro de Carga da tabela ainda.
                       </td>
                     </tr>
                   ) : (
                     history.map((item, idx) => (
                       <tr key={idx} className="hover:bg-white/5 transition-colors">
-                        <td className="px-1 py-1.5 text-white/80 text-center">{item.date}</td>
-                        <td className="px-1 py-1.5 text-white/80">{item.banco}</td>
-                        <td className="px-1 py-1.5 text-white/80">{item.arquivo}</td>
-                        <td className="px-1 py-1.5 text-white/80">{item.usuario}</td>
+                        <td className="px-1 py-1.5 text-white/80 text-center text-[11px]">{item.date}</td>
+                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-left">{item.banco}</td>
+                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-center">{renderActionIcon(item.acao)}</td>
+                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-left">{item.arquivo}</td>
+                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-left">{item.usuario}</td>
                       </tr>
                     ))
                   )}
@@ -720,8 +808,117 @@ const TableLoad: React.FC<TableLoadProps> = ({
           </div>
         </div>
       )}
+
+      {payrollConflictRef && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
+          <div className="relative w-full max-w-xl bg-[#0d1425] border border-white/10 rounded-2xl shadow-[0_25px_80px_-20px_rgba(0,0,0,0.8)] overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/05 via-rose-500/8 to-transparent pointer-events-none" />
+            <div className="relative p-6 space-y-5">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-full bg-rose-500/15 border border-rose-400/60 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-8 h-8 text-rose-400" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-white text-xl font-semibold">Excluir Fechamento!</h3>
+                  <p className="text-white/80 text-sm mt-2 leading-relaxed">
+                    Essa Folha de Pgto {payrollConflictRef} ja foi fechada, porem voce pode exclui-la e inserir novos dados.
+                    Isso ira excluir todos os dados definidivamente.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 flex items-end gap-4 flex-wrap justify-between">
+                <div className="w-full max-w-[220px]">
+                  <label className="text-white/70 text-xs mb-1 block">
+                    Senha de confirmacao <span className="text-rose-400">{Math.min(payrollPasswordAttempts, 3)}/3</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={payrollConflictPassword}
+                    onChange={(e) => {
+                      setPayrollConflictPassword(e.target.value)
+                      if (payrollPasswordErrorType) setPayrollPasswordErrorType(null)
+                    }}
+                    className={`w-full bg-white/5 text-white text-sm border rounded-lg px-3 py-2.5 outline-none focus:border-emerald-400 ${
+                      payrollPasswordErrorType ? 'border-rose-400' : 'border-white/10'
+                    }`}
+                    placeholder="Digite sua senha"
+                 />
+                  {payrollPasswordErrorType === 'required' && (
+                    <div className="flex items-center gap-1 text-amber-300 text-xs mt-1">
+                      <TriangleAlert className="w-4 h-4" />
+                      <span>Obrigatorio!!!</span>
+                    </div>
+                  )}
+                  {payrollPasswordErrorType === 'invalid' && (
+                    <div className="flex items-center gap-1 text-rose-300 text-xs mt-1">
+                      <TriangleAlert className="w-4 h-4" />
+                      <span>Senha Incorreta - {Math.max(payrollPasswordAttempts, 1)}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 ml-auto">
+                  <button
+                    type="button"
+                    className="px-5 py-2.5 h-[44px] rounded-lg bg-white/5 border border-white/15 text-white hover:bg-white/10 transition-colors"
+                    onClick={() => {
+                      setPayrollConflictRef(null)
+                      pushMessage('XxX Voce cancelo a operacao')
+                      setStatus('error'); setNeutralLogStyle(true)
+                      setPayrollPasswordAttempts(0)
+                      setPayrollPasswordErrorType(null)
+                      setPayrollConflictPassword('')
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className="px-5 py-2.5 h-[44px] rounded-lg bg-rose-500 text-white font-semibold hover:bg-rose-600 transition-colors"
+                    onClick={async () => {
+                      const pwd = payrollConflictPassword.trim()
+                      if (!pwd) {
+                        setPayrollPasswordErrorType('required')
+                        return
+                      }
+                      if (!sessionUser) {
+                        pushMessage('XxX Sessao invalida. Faça login novamente.')
+                        return
+                      }
+                      const isValid = await verifyPassword(pwd, sessionUser.password)
+                      if (!isValid) {
+                        const nextAttempts = payrollPasswordAttempts + 1
+                        setPayrollPasswordAttempts(nextAttempts)
+                        setPayrollPasswordErrorType('invalid')
+                        if (nextAttempts >= 3) {
+                          pushMessage('XxX Parece que voce nao tem acesso a exclusao')
+                          setStatus('error'); setNeutralLogStyle(true)
+                          setPayrollConflictRef(null)
+                          setPayrollConflictPassword('')
+                          setPayrollPasswordAttempts(0)
+                          setPayrollPasswordErrorType(null)
+                        }
+                        return
+                      }
+                      if (payrollConflictRef) {
+                        pushMessage(`Excluindo fechamento da folha pgto : ${payrollConflictRef}`)
+                      }
+                      setPayrollConflictRef(null)
+                      setPayrollConflictPassword('')
+                      setPayrollPasswordAttempts(0)
+                      setPayrollPasswordErrorType(null)
+                    }}
+                  >
+                    Excluir
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
 
 export default TableLoad
+

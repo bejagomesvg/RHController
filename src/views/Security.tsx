@@ -594,35 +594,38 @@ const Security: React.FC<SecurityProps> = ({
       )}
 
       {confirmDelete && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60">
-          <div className="bg-slate-900 border border-white/15 rounded-xl shadow-2xl w-full max-w-lg p-6 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-12 h-12 rounded-full bg-rose-500/15 border border-rose-400/60 flex items-center justify-center">
-                <AlertTriangle className="w-8 h-8 text-rose-400" />
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/70 px-4">
+          <div className="relative w-full max-w-xl bg-[#0d1425] border border-white/10 rounded-2xl shadow-[0_25px_80px_-20px_rgba(0,0,0,0.8)] overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/05 via-emerald-400/5 to-transparent pointer-events-none" />
+            <div className="relative p-6 space-y-5">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-full bg-rose-500/15 border border-rose-400/60 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-8 h-8 text-rose-400" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-white text-xl font-semibold">Excluir usuario</h3>
+                  <p className="text-white/70 text-sm mt-1 leading-relaxed">
+                    Confirmar exclusao de <span className="text-white font-semibold">{confirmDelete.name}</span>?
+                  </p>
+                </div>
               </div>
-              <div className="flex-1">
-                <h3 className="text-white text-lg font-semibold">Excluir usuario</h3>
-                <p className="text-white/70 text-sm">
-                  Confirmar exclusao de <span className="text-white font-semibold">{confirmDelete.name}</span>?
-                </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  className="px-5 py-2.5 rounded-lg bg-white/5 border border-white/15 text-white hover:bg-white/10 transition-colors"
+                  onClick={() => setConfirmDelete(null)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="px-5 py-2.5 rounded-lg bg-rose-500 text-white font-semibold hover:bg-rose-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  onClick={() => confirmDelete && deleteUser(confirmDelete)}
+                  disabled={isDeletingId === confirmDelete.id}
+                >
+                  {isDeletingId === confirmDelete.id ? 'Excluindo...' : 'Excluir'}
+                </button>
               </div>
-            </div>
-            <div className="flex justify-center gap-3">
-              <button
-                type="button"
-                className="px-4 py-2 rounded-md bg-white/10 border border-white/15 text-white hover:bg-white/15 transition-colors"
-                onClick={() => setConfirmDelete(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                className="px-4 py-2 rounded-md bg-rose-500 text-white font-semibold hover:bg-rose-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                onClick={() => confirmDelete && deleteUser(confirmDelete)}
-                disabled={isDeletingId === confirmDelete.id}
-              >
-                {isDeletingId === confirmDelete.id ? 'Excluindo...' : 'Excluir'}
-              </button>
             </div>
           </div>
         </div>

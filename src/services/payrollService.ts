@@ -17,6 +17,18 @@ export interface PayrollResult {
   error?: string
 }
 
+export interface PayrollMonthCheck {
+  ok: boolean
+  exists: boolean
+  error?: string
+}
+
+export interface PayrollDeleteResult {
+  ok: boolean
+  deleted: number
+  error?: string
+}
+
 const parseNumber = (val: any): number | null => {
   const num = Number(String(val ?? '').replace(/\D/g, ''))
   return Number.isNaN(num) ? null : num
@@ -75,5 +87,84 @@ export const insertPayroll = async (
   } catch (error) {
     console.error('Erro ao salvar payroll', error)
     return { ok: false, inserted: 0, error: (error as Error).message }
+  }
+}
+
+export const checkPayrollMonthExists = async (
+  paymentDate: any,
+  supabaseUrl?: string,
+  supabaseKey?: string
+): Promise<PayrollMonthCheck> => {
+  if (!supabaseUrl || !supabaseKey) {
+    return { ok: false, exists: false, error: 'Missing Supabase credentials' }
+  }
+
+  const iso = formatDate(paymentDate)
+  if (!iso) {
+    return { ok: false, exists: false, error: 'Data de pagamento invalida' }
+  }
+
+  const start = new Date(iso)
+  if (Number.isNaN(start.getTime())) {
+    return { ok: false, exists: false, error: 'Data de pagamento invalida' }
+  }
+  const monthStart = new Date(Date.UTC(start.getFullYear(), start.getMonth(), 1, 0, 0, 0))
+  const nextMonth = new Date(Date.UTC(start.getFullYear(), start.getMonth() + 1, 1, 0, 0, 0))
+
+  try {
+    const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
+    url.searchParams.set('select', 'date_payroll')
+    url.searchParams.append('date_payroll', `gte.${monthStart.toISOString()}`)
+    url.searchParams.append('date_payroll', `lt.${nextMonth.toISOString()}`)
+    url.searchParams.set('limit', '1')
+
+    const res = await fetch(url.toString(), {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+    })
+    if (!res.ok) {
+      return { ok: false, exists: false, error: await res.text() }
+    }
+    const rows = (await res.json()) as Array<{ date_payroll: string }>
+    return { ok: true, exists: rows.length > 0 }
+  } catch (error) {
+    return { ok: false, exists: false, error: (error as Error).message }
+  }
+}
+
+export const deletePayrollByMonth = async (
+  paymentDate: any,
+  supabaseUrl?: string,
+  supabaseKey?: string
+): Promise<PayrollDeleteResult> => {
+  if (!supabaseUrl || !supabaseKey) {
+    return { ok: false, deleted: 0, error: 'Missing Supabase credentials' }
+  }
+
+  const iso = formatDate(paymentDate)
+  if (!iso) return { ok: false, deleted: 0, error: 'Data de pagamento invalida' }
+
+  const base = new Date(iso)
+  if (Number.isNaN(base.getTime())) return { ok: false, deleted: 0, error: 'Data de pagamento invalida' }
+
+  const monthStart = new Date(Date.UTC(base.getFullYear(), base.getMonth(), 1, 0, 0, 0))
+  const nextMonth = new Date(Date.UTC(base.getFullYear(), base.getMonth() + 1, 1, 0, 0, 0))
+
+  try {
+    const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
+    url.searchParams.append('date_payroll', `gte.${monthStart.toISOString()}`)
+    url.searchParams.append('date_payroll', `lt.${nextMonth.toISOString()}`)
+
+    const res = await fetch(url.toString(), {
+      method: 'DELETE',
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+    })
+    if (!res.ok) {
+      return { ok: false, deleted: 0, error: await res.text() }
+    }
+    const deletedHeader = res.headers.get('content-range')
+    const deleted = deletedHeader ? Number(deletedHeader.split('/')[1] || 0) : 0
+    return { ok: true, deleted: Number.isNaN(deleted) ? 0 : deleted }
+  } catch (error) {
+    return { ok: false, deleted: 0, error: (error as Error).message }
   }
 }
