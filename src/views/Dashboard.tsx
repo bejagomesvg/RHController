@@ -15,6 +15,7 @@ import {
   TrendingUp,
   Gift,
   Table,
+  FactoryIcon,
 } from 'lucide-react'
 import type { ModuleKey } from '../models/user'
 
@@ -88,6 +89,13 @@ const Dashboard: React.FC<DashboardProps> = ({
       title: 'Benefícios',
       description: 'Vale transporte, alimentação e saúde',
       icon: <Gift className="w-5 h-5 text-white" />,
+      color: 'bg-gradient-to-br from-violet-400 to-purple-600',
+    },
+        {
+      key: 'operations' as const,
+      title: 'Operações',
+      description: 'Gestão de operações RH, Produção e Controle de Horas Extras',
+      icon: <FactoryIcon className="w-5 h-5 text-white" />,
       color: 'bg-gradient-to-br from-violet-400 to-purple-600',
     },
   ]
