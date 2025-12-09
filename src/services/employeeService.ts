@@ -20,12 +20,15 @@ export interface EmployeePayload {
   type_registration: string
   user_registration: string | null
   date_registration: string
+  user_update?: string | null
+  date_update?: string | null
 }
 
 export interface EmployeeResult {
   ok: boolean
   newCount: number
   updatedCount: number
+  error?: string
 }
 
 export interface EmployeeRegistryList {
@@ -43,9 +46,36 @@ const parseDateIso = (val: any): string | null => {
   return formatted || null
 }
 
+const todayLocalDateIso = () => {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
 const parseSalary = (val: any): number | null => {
-  if (!val && val !== 0) return null
-  const parsed = Number(String(val).replace(/[^\d,-]/g, '').replace(',', '.'))
+  if (val === null || val === undefined || val === '') return null
+  if (typeof val === 'number') return Number.isFinite(val) ? val : null
+
+  const raw = String(val).trim()
+  if (!raw) return null
+
+  const hasComma = raw.includes(',')
+  const hasDot = raw.includes('.')
+
+  let normalized = raw
+  if (hasComma && hasDot) {
+    // Ex.: 4.740,12 -> remover milhar (.) e usar , como decimal
+    normalized = raw.replace(/\./g, '').replace(',', '.')
+  } else if (hasComma && !hasDot) {
+    // Ex.: 4740,12
+    normalized = raw.replace(',', '.')
+  } else {
+    // Sem vírgula; se houver mais de um ponto, remover milhares
+    const dotCount = (raw.match(/\./g) || []).length
+    normalized = dotCount > 1 ? raw.replace(/\./g, '') : raw
+  }
+
+  const parsed = Number(normalized)
   return Number.isNaN(parsed) ? null : parsed
 }
 
@@ -65,11 +95,11 @@ export const mapRowToEmployee = (row: Record<string, any>, userName?: string | n
     education: row['Descricao (Instrucao)'] ? String(row['Descricao (Instrucao)']).trim() : null,
     sex: row['Sexo'] ? String(row['Sexo']).trim() : null,
     marital: row['Descricao (Estado Civil)'] ? String(row['Descricao (Estado Civil)']).trim() : null,
-    ethnicity: row['Descricao (Raça/Etnia)'] ? String(row['Descricao (Raca/Etnia)']).trim() : null,
+    ethnicity: row['Descricao (Raca/Etnia)'] ? String(row['Descricao (Raca/Etnia)']).trim() : null,
     salary: parseSalary(row['Valor Salario']),
     type_registration: 'Importado',
     user_registration: userName || null,
-    date_registration: new Date().toISOString(),
+    date_registration: todayLocalDateIso(), // apenas data local (sem fuso)
   }
 }
 
@@ -80,7 +110,7 @@ export const insertEmployees = async (
   supabaseKey?: string
 ): Promise<EmployeeResult> => {
   if (!supabaseUrl || !supabaseKey) {
-    return { ok: false, newCount: 0, updatedCount: 0 }
+    return { ok: false, newCount: 0, updatedCount: 0, error: 'Missing Supabase credentials' }
   }
 
   try {
@@ -91,8 +121,9 @@ export const insertEmployees = async (
       headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
     })
     if (!existingRes.ok) {
-      console.error('Erro ao buscar registros existentes', await existingRes.text())
-      return { ok: false, newCount: 0, updatedCount: 0 }
+      const errTxt = await existingRes.text()
+      console.error('Erro ao buscar registros existentes', errTxt)
+      return { ok: false, newCount: 0, updatedCount: 0, error: errTxt }
     }
 
     const existingData = (await existingRes.json()) as Array<{ registration: number }>
@@ -103,13 +134,19 @@ export const insertEmployees = async (
     const toInsert = filtered.filter((p) => p.registration !== null && !existingSet.has(p.registration))
 
     if (filtered.length === 0) {
-      console.error('Nenhuma linha com registro valido para employee')
-      return { ok: false, newCount: 0, updatedCount: 0 }
+      const message = 'Nenhuma linha com registro valido para employee'
+      console.error(message)
+      return { ok: false, newCount: 0, updatedCount: 0, error: message }
     }
 
     for (const entry of toUpdate) {
       const updateUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
       updateUrl.searchParams.set('registration', `eq.${entry.registration}`)
+      const updatePayload = {
+        ...entry,
+        user_update: userName || null,
+        date_update: new Date().toISOString(),
+      }
       const res = await fetch(updateUrl.toString(), {
         method: 'PATCH',
         headers: {
@@ -118,12 +155,12 @@ export const insertEmployees = async (
           Authorization: `Bearer ${supabaseKey}`,
           Prefer: 'return=minimal',
         },
-        body: JSON.stringify(entry),
+        body: JSON.stringify(updatePayload),
       })
       if (!res.ok) {
         const errTxt = await res.text()
         console.error('Erro ao atualizar employee', errTxt)
-        return { ok: false, newCount: 0, updatedCount: 0 }
+        return { ok: false, newCount: 0, updatedCount: 0, error: errTxt }
       }
     }
 
@@ -142,14 +179,14 @@ export const insertEmployees = async (
       if (!resInsert.ok) {
         const errTxt = await resInsert.text()
         console.error('Erro ao inserir employee', errTxt)
-        return { ok: false, newCount: 0, updatedCount: 0 }
+        return { ok: false, newCount: 0, updatedCount: 0, error: errTxt }
       }
     }
 
     return { ok: true, newCount: toInsert.length, updatedCount: toUpdate.length }
   } catch (error) {
     console.error('Erro ao salvar employee', error)
-    return { ok: false, newCount: 0, updatedCount: 0 }
+    return { ok: false, newCount: 0, updatedCount: 0, error: (error as Error).message }
   }
 }
 

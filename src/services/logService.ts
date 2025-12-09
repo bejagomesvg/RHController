@@ -7,6 +7,28 @@ export interface HistoryEntry {
   usuario: string
 }
 
+const SMALLINT_MAX = 32767
+
+const getNextLogId = async (supabaseUrl: string, supabaseKey: string): Promise<number | null> => {
+  try {
+    const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
+    url.searchParams.set('select', 'id')
+    url.searchParams.set('order', 'id.desc')
+    url.searchParams.set('limit', '1')
+    const res = await fetch(url.toString(), {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as Array<{ id: number }>
+    const next = data.length > 0 ? Number(data[0].id || 0) + 1 : 1
+    if (Number.isNaN(next) || next > SMALLINT_MAX) return null
+    return next
+  } catch (error) {
+    console.error('Erro ao calcular proximo id do log', error)
+    return null
+  }
+}
+
 export const fetchHistory = async (
   supabaseUrl?: string,
   supabaseKey?: string
@@ -14,43 +36,44 @@ export const fetchHistory = async (
   if (!supabaseUrl || !supabaseKey) return []
   try {
     const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
-    url.searchParams.set('select', 'id,registration,actions,date_registration,file_,user_registration')
+    url.searchParams.set('select', 'id,table_registration,actions,date_registration,file_,user_registration,type_registration')
     url.searchParams.set('order', 'date_registration.desc')
     const res = await fetch(url.toString(), {
       headers: {
         apikey: supabaseKey,
         Authorization: `Bearer ${supabaseKey}`,
-        Prefer: 'return=minimal',
       },
     })
     if (!res.ok) {
-      console.error('Erro ao buscar historico', await res.text())
-      return []
+      const errTxt = await res.text()
+      console.error('Erro ao buscar historico', errTxt)
+      throw new Error(errTxt || 'Erro ao buscar historico')
     }
     const data = (await res.json()) as Array<{
       id: number
-      registration: string
-      actions : string
+      table_registration?: string
+      actions: string
       date_registration: string
       file_: string
       user_registration: string
+      type_registration?: string
     }>
     return data.map((item) => ({
       id: item.id,
-      banco: item.registration,
-      acao : item.actions,
+      banco: item.table_registration || '-',
+      acao: item.actions,
       date: item.date_registration,
       arquivo: item.file_,
       usuario: item.user_registration,
     }))
   } catch (error) {
     console.error('Erro ao buscar historico', error)
-    return []
+    throw error
   }
 }
 
 export const insertHistory = async (
-  entry: { registration: string; actions: string; date: string; file: string; user: string },
+  entry: { table: string; actions: string; file: string; user: string; type?: string; id?: number },
   supabaseUrl?: string,
   supabaseKey?: string
 ): Promise<boolean> => {
@@ -58,14 +81,20 @@ export const insertHistory = async (
     return false
   }
   try {
+    const nextId = entry.id ?? (await getNextLogId(supabaseUrl, supabaseKey))
+    if (nextId === null) {
+      console.error('Nao foi possivel gerar id para log_table_load')
+      return false
+    }
     const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
     const payload = {
-      registration: entry.registration,
+      id: nextId,
+      table_registration: entry.table,
       actions: entry.actions,
-      // Usa timestamp atual do servidor/cliente em ISO para preservar data e hora completas
       date_registration: new Date().toISOString(),
       file_: entry.file,
       user_registration: entry.user,
+      type_registration: entry.type ?? 'Importado',
     }
     const res = await fetch(url.toString(), {
       method: 'POST',
@@ -73,7 +102,7 @@ export const insertHistory = async (
         'Content-Type': 'application/json',
         apikey: supabaseKey,
         Authorization: `Bearer ${supabaseKey}`,
-        Prefer: 'return=representation',
+        Prefer: 'return=minimal',
       },
       body: JSON.stringify(payload),
     })

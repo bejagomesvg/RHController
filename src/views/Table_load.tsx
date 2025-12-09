@@ -1,34 +1,77 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
+import { toast, Toaster } from 'react-hot-toast'
 import {
-  AlertTriangle,
   ArrowLeft,
   Check,
-  Circle,
-  CircleCheckBig,
-  ClipboardList,
-  FileSpreadsheet,
-  Loader2,
   TriangleAlert,
-  Upload,
   X,
 } from 'lucide-react'
-import { validateEmployeeSheet, validateEmployeeRow, REQUIRED_FIELDS, formatDate } from '../utils/employeeParser'
+import { validateEmployeeSheet, validateEmployeeRow, REQUIRED_FIELDS } from '../utils/employeeParser'
 import { insertEmployees, fetchEmployeeRegistrations } from '../services/employeeService'
-import { checkPayrollMonthExists, deletePayrollByMonth, insertPayroll } from '../services/payrollService'
-import { loadSession } from '../services/sessionService'
-import { verifyPassword } from '../services/authService'
+import { checkPayrollMonthExists, insertPayroll } from '../services/payrollService'
 import type { HistoryEntry } from '../services/logService'
 import { fetchHistory, insertHistory } from '../services/logService'
-import LogItem from '../components/LogItem'
+import ImportForm from '../components/ImportForm'
+import HistoryTable from '../components/HistoryTable'
+import DataPreview from '../components/DataPreview'
+import PayrollConflictModal from '../components/PayrollConflictModal'
 
-
-type ImportStatus = 'idle' | 'validating' | 'uploading' | 'done' | 'error'
-type SheetData = Record<string, any>[]
-
-interface RowError {
+export interface RowError {
   rowIndex: number
   errors: string[]
+}
+
+// State Management with useReducer
+export type ImportStatus = 'idle' | 'validating' | 'uploading' | 'done' | 'error'
+export type SheetData = Record<string, any>[]
+export type SheetType = 'CADASTRO' | 'FOLHA PGTO' | 'HORAS EXTRAS' | ''
+
+export interface State {
+  sheetType: SheetType
+  selectedFile: File | null
+  status: ImportStatus
+  progress: number
+  messages: string[]
+  sheetData: SheetData
+  columns: string[]
+  sheetHeaderError: string[]
+  rowErrors: RowError[]
+  importFinished: boolean
+  showPreview: boolean
+  payrollConflictRef: string | null
+  payrollConflictPassword: string
+  payrollPasswordErrorType: 'required' | 'invalid' | null
+  payrollPasswordAttempts: number
+  payrollConflictDate: string | null
+  payrollDeletedSuccessfully: boolean
+}
+
+export type Action =
+  | { type: 'SET_SHEET_TYPE'; payload: SheetType }
+  | { type: 'SELECT_FILE'; payload: File | null }
+  | { type: 'RESET_FORM' }
+  | { type: 'RESET_FILE_INPUT' }
+  | { type: 'PUSH_MESSAGE'; payload: string }
+  | { type: 'SET_STATUS'; payload: ImportStatus }
+  | { type: 'SET_PROGRESS'; payload: number }
+  | { type: 'SET_PREVIEW'; payload: boolean }
+  | { type: 'VALIDATION_ERROR'; payload: { messages: string[]; headers?: string[] } }
+  | { type: 'FILE_READ_SUCCESS'; payload: { data: SheetData; columns: string[]; messages: string[]; rowErrors?: RowError[] } }
+  | { type: 'SET_PAYROLL_CONFLICT'; payload: { ref: string; date: string } }
+  | { type: 'UPDATE_PAYROLL_PASSWORD'; payload: string }
+  | { type: 'SET_PAYROLL_PASSWORD_ERROR'; payload: 'required' | 'invalid' | null }
+  | { type: 'INCREMENT_PASSWORD_ATTEMPTS' }
+  | { type: 'RESET_PAYROLL_CONFLICT' }
+  | { type: 'PAYROLL_DELETE_SUCCESS' }
+  | { type: 'IMPORT_SUCCESS'; payload: { messages: string[] } }
+  | { type: 'IMPORT_FAILURE'; payload: { messages: string[] } }
+
+const initialState: State = {
+  sheetType: '', selectedFile: null, status: 'idle', progress: 0, messages: [],
+  sheetData: [], columns: [], sheetHeaderError: [], rowErrors: [], importFinished: false, showPreview: false,
+  payrollConflictRef: null, payrollConflictPassword: '', payrollPasswordErrorType: null,
+  payrollPasswordAttempts: 0, payrollConflictDate: null, payrollDeletedSuccessfully: false,
 }
 
 interface TableLoadProps {
@@ -39,6 +82,118 @@ interface TableLoadProps {
   description?: string
 }
 
+const tableLoadReducer = (state: State, action: Action): State => {
+  switch (action.type) {
+    case 'SET_SHEET_TYPE':
+      return { ...initialState, sheetType: action.payload, messages: [] }
+    case 'SELECT_FILE':
+      return { ...state, selectedFile: action.payload, progress: 0, status: 'idle', messages: [], sheetData: [], columns: [], importFinished: false, showPreview: false }
+    case 'RESET_FORM':
+      return { ...initialState, messages: [] }
+    case 'RESET_FILE_INPUT':
+      return { ...state, selectedFile: null, sheetData: [], columns: [], status: 'idle', progress: 0 }
+    case 'PUSH_MESSAGE':
+      return { ...state, messages: [action.payload, ...state.messages].slice(0, 6) }
+    case 'SET_STATUS':
+      return { ...state, status: action.payload }
+    case 'SET_PROGRESS':
+      return { ...state, progress: action.payload }
+    case 'SET_PREVIEW':
+      return { ...state, showPreview: action.payload }
+    case 'VALIDATION_ERROR':
+      return { ...state, status: 'error', sheetHeaderError: action.payload.headers || [], sheetData: [], columns: [], messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
+    case 'FILE_READ_SUCCESS':
+      return { ...state, sheetData: action.payload.data, columns: action.payload.columns, rowErrors: action.payload.rowErrors || [], sheetHeaderError: [], messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
+    case 'SET_PAYROLL_CONFLICT':
+      return { ...state, payrollConflictRef: action.payload.ref, payrollConflictDate: action.payload.date, status: 'idle', importFinished: false }
+    case 'UPDATE_PAYROLL_PASSWORD':
+      return { ...state, payrollConflictPassword: action.payload, payrollPasswordErrorType: null }
+    case 'SET_PAYROLL_PASSWORD_ERROR':
+      return { ...state, payrollPasswordErrorType: action.payload }
+    case 'INCREMENT_PASSWORD_ATTEMPTS':
+      return { ...state, payrollPasswordAttempts: state.payrollPasswordAttempts + 1 }
+    case 'RESET_PAYROLL_CONFLICT':
+      return { ...state, payrollConflictRef: null, payrollConflictDate: null, payrollConflictPassword: '', payrollPasswordAttempts: 0, payrollPasswordErrorType: null, payrollDeletedSuccessfully: false }
+    case 'PAYROLL_DELETE_SUCCESS':
+      return { ...state, status: 'done', payrollDeletedSuccessfully: true, importFinished: false, payrollConflictRef: null, payrollConflictDate: null, payrollConflictPassword: '', payrollPasswordAttempts: 0, payrollPasswordErrorType: null }
+    case 'IMPORT_SUCCESS':
+      return { ...state, status: 'done', progress: 100, importFinished: true, messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
+    case 'IMPORT_FAILURE':
+      return { ...state, status: 'error', importFinished: false, messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
+    default:
+      return state
+  }
+}
+
+// Helper function moved outside the component to be a stable reference.
+const padNumber = (n: number) => String(n).padStart(2, '0')
+
+const extractFieldFromError = (errorMsg: string): string | null => {
+  const knownFields = [...REQUIRED_FIELDS, 'CPF']
+  const match = knownFields.find((field) => errorMsg.startsWith(field))
+  return match || null
+}
+
+const getRefMonthYear = (value: any): string => {
+  if (!value) return ''
+
+  // Handle Excel's numeric date format
+  if (typeof value === 'number' && value > 1) {
+    const excelEpoch = new Date(1899, 11, 30)
+    const d = new Date(excelEpoch.getTime() + value * 86400000)
+    if (!Number.isNaN(d.getTime())) {
+      return `${padNumber(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`
+    }
+  }
+
+  // Handle string dates (DD/MM/YYYY, YYYY-MM-DD, etc.)
+  const dateStr = String(value)
+  const parts = dateStr.split(/[/.-]/)
+  let d: Date
+  if (parts.length === 3 && parts[2].length === 4) { // Looks like DD/MM/YYYY or MM/DD/YYYY
+    // Assuming DD/MM/YYYY for Brazilian locale
+    d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`)
+  } else {
+    d = new Date(value)
+  }
+
+  if (Number.isNaN(d.getTime())) return ''
+  return `${padNumber(d.getMonth() + 1)}/${d.getFullYear()}`
+}
+
+const extractRegistrationNumbers = (jsonData: SheetData): number[] => {
+  const registrationSet = new Set<number>()
+  jsonData.forEach(row => {
+    const rawValue = row['cadastro']
+    if (rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== '') {
+      const num = Number(String(rawValue).replace(/\D/g, ''))
+      if (!Number.isNaN(num) && num > 0) {
+        registrationSet.add(num)
+      }
+    }
+  })
+  return Array.from(registrationSet)
+}
+
+const formatDateFromDb = (value?: string | null) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return `${padNumber(date.getDate())}/${padNumber(date.getMonth() + 1)}/${date.getFullYear()} ${padNumber(date.getHours())}:${padNumber(
+    date.getMinutes()
+  )}`
+}
+
+const convertExcelDate = (serial: number): string => {
+  if (typeof serial !== 'number' || serial <= 0) return String(serial);
+  // Excel's epoch starts on 1899-12-30 due to a leap year bug with 1900.
+  // We subtract 1 because Excel's day 1 is Jan 1, 1900.
+  const excelEpoch = new Date(1899, 11, 30);
+  const date = new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(date.getTime())) return String(serial);
+  return `${padNumber(date.getUTCDate())}/${padNumber(date.getUTCMonth() + 1)}/${date.getUTCFullYear()}`;
+}
+
 const TableLoad: React.FC<TableLoadProps> = ({
   onBack,
   userName = 'Usuario',
@@ -47,152 +202,296 @@ const TableLoad: React.FC<TableLoadProps> = ({
   description = 'Importar massa de dados via planilha.',
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [sheetType, setSheetType] = useState<'CADASTRO' | 'FOLHA PGTO' | 'HORAS EXTRAS' | ''>('')
-  const [status, setStatus] = useState<ImportStatus>('idle')
-  const [progress, setProgress] = useState<number>(0)
-  const [messages, setMessages] = useState<string[]>([])
-  const [sheetData, setSheetData] = useState<SheetData>([])
-  const [columns, setColumns] = useState<string[]>([])
-  const [sheetHeaderError, setSheetHeaderError] = useState<string[]>([])
+  const supportedSheets = ['CADASTRO', 'FOLHA PGTO'] as const
+  const requiredFolhaHeaders = ['cadastro', 'Colaborador', 'Evento', 'Pagamento', 'Referencia', 'valor']
+  const ITEMS_PER_PAGE = 11
+
+  const [state, dispatch] = useReducer(tableLoadReducer, initialState)
+  const {
+    sheetType, selectedFile, status, messages, sheetData, columns, sheetHeaderError,
+    importFinished, showPreview, payrollConflictRef, payrollDeletedSuccessfully, rowErrors
+  } = state
+
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [importFinished, setImportFinished] = useState<boolean>(false)
-  const [showPreview, setShowPreview] = useState<boolean>(false)
-  const [neutralLogStyle, setNeutralLogStyle] = useState<boolean>(false)
-  const [payrollConflictRef, setPayrollConflictRef] = useState<string | null>(null)
-  const [payrollConflictPassword, setPayrollConflictPassword] = useState<string>('')
-  const [payrollPasswordErrorType, setPayrollPasswordErrorType] = useState<'required' | 'invalid' | null>(null)
-  const [payrollPasswordAttempts, setPayrollPasswordAttempts] = useState<number>(0)
-  const [payrollConflictDate, setPayrollConflictDate] = useState<string | null>(null)
-  const [payrollDeletedSuccessfully, setPayrollDeletedSuccessfully] = useState<boolean>(false)
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [historySearchQuery, setHistorySearchQuery] = useState('')
+  const [sortConfig, setSortConfig] = useState<{
+    key: keyof HistoryEntry
+    direction: 'ascending' | 'descending'
+  } | null>({ key: 'date', direction: 'descending' })
+
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
-  const sessionUser = loadSession()
-
-  const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || (importFinished && !payrollDeletedSuccessfully)
-  const supportedSheets = ['CADASTRO', 'FOLHA PGTO'] as const
-  const isSupportedSheet = supportedSheets.includes(sheetType as any)
+  const isSupportedSheet = supportedSheets.includes(sheetType as 'CADASTRO' | 'FOLHA PGTO')
   const isCadastro = sheetType === 'CADASTRO'
   const isFolha = sheetType === 'FOLHA PGTO'
-  const requiredFolhaHeaders = ['cadastro', 'Colaborador', 'Evento', 'Pagamento', 'Referencia', 'valor']
+  const hasBlockingRowErrors = rowErrors.length > 0 && !isCadastro
+  const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || (importFinished && !payrollDeletedSuccessfully) || hasBlockingRowErrors
+  
+  useEffect(() => {
+    setCurrentPage(1) // Reset page when search query changes
+  }, [historySearchQuery, sortConfig])
+
+  const processedHistory = useMemo(() => {
+    // Format the date for display here, keeping the original history state clean
+    const formattedHistory = history.map(item => ({
+      ...item,
+      date: formatDateFromDb(item.date),
+    }))
+
+    let filteredItems = formattedHistory
+    if (!historySearchQuery) {
+      filteredItems = formattedHistory
+    } else {
+      const lowercasedQuery = historySearchQuery.toLowerCase()
+      filteredItems = formattedHistory.filter(item =>
+        Object.values(item).some(value =>
+          String(value).toLowerCase().includes(lowercasedQuery)
+        )
+      )
+    }
+
+    if (sortConfig !== null && sortConfig.key === 'date') {
+      // Sort by original date from history state for accuracy
+      const historyMap = new Map(history.map(item => [item.id, item.date]))
+      const sortedItems = [...filteredItems].sort((a, b) => {
+        const dateA = new Date(historyMap.get(a.id) || 0).getTime()
+        const dateB = new Date(historyMap.get(b.id) || 0).getTime()
+        return sortConfig.direction === 'ascending' ? dateA - dateB : dateB - dateA
+      })
+      return sortedItems
+    }
+    return filteredItems;
+  }, [history, historySearchQuery, sortConfig])
+
+  const paginatedHistory = processedHistory.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  )
+
+  const totalPages = Math.ceil(processedHistory.length / ITEMS_PER_PAGE)
+
+  const handlePageChange = (page: number) => {
+    if (page > 0 && page <= totalPages) setCurrentPage(page)
+  }
 
   const statusLabel: Record<ImportStatus, string> = {
-    idle: '',
+    idle: 'Aguardando ação',
     validating: ' Validando planilha',
     uploading: ' Enviando dados',
     done: ' Concluido',
     error: ' Erro',
   }
 
-  const resetFileInput = () => {
+  const resetFileInput = React.useCallback(() => {
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }
+  }, [])
 
-  const pushMessage = (message: string) => {
-    setMessages((prev) => [message, ...prev].slice(0, 6))
-    if (message.startsWith('XxX')) {
-      setSheetType('')
+  const handleSort = (key: keyof HistoryEntry) => {
+    let direction: 'ascending' | 'descending' = 'ascending'
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending'
     }
+    setSortConfig({ key, direction })
   }
 
-  const extractFieldFromError = (errorMsg: string): string | null => {
-    const knownFields = [...REQUIRED_FIELDS, 'CPF']
-    const match = knownFields.find((field) => errorMsg.startsWith(field))
-    return match || null
-  }
+  const pushMessage = React.useCallback((message: string) => {
+    dispatch({ type: 'PUSH_MESSAGE', payload: message })
+    if (message.startsWith('XxX')) {
+      dispatch({ type: 'SET_SHEET_TYPE', payload: '' })
+    }
+  }, [dispatch])
 
-  const formatDateFromDb = (value?: string | null) => {
-    if (!value) return '-'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return value
-    const pad = (n: number) => String(n).padStart(2, '0')
-    // Converte para o fuso local do navegador (ou servidor) ao exibir
-    return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(
-      date.getMinutes()
-    )}`
-  }
-
-  const formatNow = () => {
-    const now = new Date()
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(
-      now.getMinutes()
-    )}`
-  }
-
-  const getRefMonthYear = (value: any): string => {
-    if (!value) return ''
-    const raw = formatDate(value) // tenta normalizar dd/mm -> ISO
-    const d = new Date(raw || value)
-    if (Number.isNaN(d.getTime())) return ''
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(d.getMonth() + 1)}/${d.getFullYear()}`
-  }
+  const fetchAndUpdateHistory = React.useCallback(async () => {
+    setIsHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      const result = await fetchHistory(supabaseUrl, supabaseKey);
+      // Set the raw history data. Formatting is now handled in useMemo.
+      setHistory(result);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Erro ao carregar historico.'
+      setHistoryError(`Erro ao carregar historico: ${errMsg}`)
+      pushMessage(`XxX Erro ao carregar historico: ${errMsg}`)
+    } finally {
+      setIsHistoryLoading(false)
+    }
+  }, [supabaseUrl, supabaseKey, pushMessage])
 
   useEffect(() => {
-    ;(async () => {
-      const list = await fetchHistory(supabaseUrl, supabaseKey)
-      setHistory(
-        list.map((item) => ({
-          ...item,
-          date: formatDateFromDb(item.date),
-        }))
-      )
-    })()
-  }, [supabaseKey, supabaseUrl])
+    fetchAndUpdateHistory()
+  }, [fetchAndUpdateHistory])
 
   useEffect(() => {
-    setShowPreview(false)
-    setSelectedFile(null)
-    setSheetData([])
-    setSheetHeaderError([])
-    setImportFinished(false)
-    setStatus('idle'); setNeutralLogStyle(true)
-    setNeutralLogStyle(false)
-    setProgress(0)
-    setColumns([])
-    resetFileInput()
     if (sheetType && !isSupportedSheet) {
       pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
+      // Only reset the file input if the sheet type is unsupported.
+      resetFileInput()
     }
-  }, [sheetType, isSupportedSheet])
+  }, [sheetType, isSupportedSheet, pushMessage, resetFileInput])
+
+  // Effect for showing toast notifications
+  useEffect(() => {
+    // Avoid showing toasts when the modal is open, as it has its own feedback
+    if (payrollConflictRef) return
+
+    if (status === 'done') {
+      if (importFinished) {
+        toast.success('Importação concluída com sucesso!')
+      } else if (payrollDeletedSuccessfully) {
+        toast.success('Dados da folha de pagamento excluídos com sucesso.')
+      }
+    } else if (status === 'error') {
+      // Find the most recent relevant error message to display
+      const firstErrorMessage = messages.find(msg => msg.startsWith('XxX'))
+      if (firstErrorMessage) {
+        // Clean up the message for better readability in the toast
+        const cleanMessage = firstErrorMessage.replace('XxX', '').trim()
+        toast.error(cleanMessage, { duration: 4000 })
+      }
+    }
+  }, [status, importFinished, payrollDeletedSuccessfully, messages, payrollConflictRef])
 
   const handleFileSelect = (file: File | null) => {
-    if (!isSupportedSheet) {
+    if (sheetType && !isSupportedSheet) {
       pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
-      setSelectedFile(null)
-      setSheetData([])
-      setColumns([])
+      dispatch({ type: 'SELECT_FILE', payload: null })
       resetFileInput()
-      setStatus('idle'); setNeutralLogStyle(true)
-      setNeutralLogStyle(false)
-      setProgress(0)
       return
     }
-    setSelectedFile(file)
-    setProgress(0)
-    setStatus('idle'); setNeutralLogStyle(true)
-    setNeutralLogStyle(false)
-    setMessages([])
-    setSheetData([])
-    setColumns([])
-    setImportFinished(false)
-    setShowPreview(false)
+    dispatch({ type: 'SELECT_FILE', payload: file })
     if (file) {
       pushMessage(`Arquivo selecionado: ${file.name}`)
       readExcelFile(file)
     }
   }
 
+  const dispatchHeaderError = React.useCallback((missingFields: string[]) => {
+    const missing = missingFields.join(', ')
+    dispatch({ type: 'VALIDATION_ERROR', payload: { messages: [`XxX Campos obrigatorios faltando: (${missing})`], headers: missingFields } })
+  }, [dispatch])
+
+  // Helper function to validate 'CADASTRO' sheets
+  const validateCadastroSheet = React.useCallback((jsonData: SheetData, cols: string[], pushMessage: (msg: string) => void) => {
+    const headerValidation = validateEmployeeSheet(cols)
+    if (!headerValidation.valid) {
+      dispatchHeaderError(headerValidation.missingFields)
+      return { ok: false }
+    }
+
+    const rowErrors: RowError[] = []
+    jsonData.forEach((row, index) => {
+      const validation = validateEmployeeRow(row)
+      if (!validation.valid) {
+        rowErrors.push({ rowIndex: index + 2, errors: validation.errors })
+      }
+    })
+
+    if (rowErrors.length > 0) {
+      const errorFields = new Set<string>()
+      rowErrors.forEach((rowErr) => {
+        rowErr.errors.forEach((msg) => {
+          const field = extractFieldFromError(msg)
+          if (field) errorFields.add(field)
+        })
+      })
+      const fieldsText = Array.from(errorFields).join(', ')
+
+      // lista de cadastros das linhas com advertência
+      const erroredIndices = new Set(rowErrors.map((r) => r.rowIndex - 2)) // zero-based
+      const cadastroList = jsonData
+        .map((row, idx) => (erroredIndices.has(idx) ? String(row['Cadastro'] ?? '').trim() : ''))
+        .filter((cad) => cad.length > 0)
+        .join(', ')
+
+      const fieldPart = fieldsText ? `(${fieldsText})` : ''
+      const cadastroPart = cadastroList ? ` (${cadastroList})` : ''
+      pushMessage(`:) ${rowErrors.length} linha(s) com ${fieldPart} corrigida(s)${cadastroPart}.`)
+    } else {
+      pushMessage(`OoO Todas as ${jsonData.length} linhas validadas com sucesso`)
+    }
+
+    // Convert date fields from Excel serial number to readable format
+    const formattedData = jsonData.map(row => ({
+      ...row,
+      data_nascimento: row.data_nascimento ? convertExcelDate(row.data_nascimento) : row.data_nascimento,
+      data_contratacao: row.data_contratacao ? convertExcelDate(row.data_contratacao) : row.data_contratacao,
+      data_situacao: row.data_situacao ? convertExcelDate(row.data_situacao) : row.data_situacao,
+    }));
+
+    const displayColumns = REQUIRED_FIELDS.filter((field) => cols.includes(field))
+    dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: formattedData, columns: displayColumns, messages: [], rowErrors } })
+    return { ok: true }
+  }, [dispatch, dispatchHeaderError])
+
+  // Helper function to validate 'FOLHA PGTO' sheets
+  const validateFolhaSheet = React.useCallback(async (jsonData: SheetData, cols: string[], pushMessage: (msg: string) => void) => {
+    const missingFolha = requiredFolhaHeaders.filter((h) => !cols.includes(h))
+    if (missingFolha.length > 0) {
+      dispatchHeaderError(missingFolha)
+      return { ok: false }
+    }
+    pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
+
+    // 1. Validate Employee Registrations
+    const regNumbers = extractRegistrationNumbers(jsonData)
+    const employeeRegsResult = await fetchEmployeeRegistrations(supabaseUrl, supabaseKey)
+    if (!employeeRegsResult.ok) {
+      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: ['XxX Erro ao validar colaboradores.'] } })
+      return { ok: false }
+    }
+    const { registrations } = employeeRegsResult
+    const missingRegs = regNumbers.filter((r) => !registrations.has(r))
+    if (missingRegs.length > 0) {
+      dispatch({ type: 'VALIDATION_ERROR', payload: { messages: [`XxX Colaboradores nao encontrado: (${missingRegs.join(', ')})`] } })
+      return { ok: false }
+    }
+
+    // 2. Check for existing payroll month
+    const paymentValue = jsonData[0]?.['Pagamento']
+    const refMonth = getRefMonthYear(paymentValue) || '-'
+    const payrollCheck = await checkPayrollMonthExists(paymentValue, supabaseUrl, supabaseKey)
+    if (!payrollCheck.ok) {
+      const detail = payrollCheck.error ? ` Detalhe: ${payrollCheck.error}` : ''
+      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [`XxX Erro ao verificar folha ref. ${refMonth}.${detail}`] } })
+      return { ok: false }
+    }
+    if (payrollCheck.exists) {
+      pushMessage(`:) Pagamento ref. ${refMonth} ja consta em payroll.`)
+      dispatch({ type: 'SET_PAYROLL_CONFLICT', payload: { ref: refMonth, date: String(paymentValue) } })
+      // Do not return `ok: false`. The process is paused, pending user action in the modal.
+      return { ok: true, paused: true } // Return a specific state to prevent further processing
+    }
+
+    // 3. Normalize and format data for preview
+    const folhaOrder = ['cadastro', 'Colaborador', 'Evento', 'Pagamento', 'Referencia', 'valor']
+    const ordered = folhaOrder.filter((c) => cols.includes(c))
+    const remaining = cols.filter((c) => !ordered.includes(c))
+    const normalized = jsonData.map((row) => {
+      const cadastroNum = row['cadastro'] ? Number(String(row['cadastro']).replace(/\D/g, '')) : row['cadastro']
+      const eventoNum = row['Evento'] ? Number(String(row['Evento']).replace(/\D/g, '')) : row['Evento']
+      let rawValorNum: number | null = null
+      if (typeof row['valor'] === 'number') {
+        rawValorNum = row['valor']
+      } else if (row['valor']) {
+        const cleaned = String(row['valor']).replace(/[^0-9,.-]/g, '').replace(/\./g, '').replace(',', '.')
+        const parsed = Number(cleaned)
+        rawValorNum = Number.isNaN(parsed) ? null : parsed
+      }
+      const valorFormatado = typeof rawValorNum === 'number' ? rawValorNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : row['valor']
+      return { ...row, cadastro: cadastroNum, Evento: eventoNum, valor: valorFormatado, _valorRaw: rawValorNum }
+    })
+
+    dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: normalized, columns: [...ordered, ...remaining], messages: [], rowErrors: [] } })
+    return { ok: true }
+  }, [dispatch, supabaseUrl, supabaseKey])
+
   const readExcelFile = (file: File) => {
     if (!isSupportedSheet) {
       pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
-      setSheetData([])
-      resetFileInput()
-      setSelectedFile(null)
-      setStatus('idle'); setNeutralLogStyle(true)
-      setProgress(0)
-      setColumns([])
+      dispatch({ type: 'RESET_FILE_INPUT' })
       return
     }
     const reader = new FileReader()
@@ -203,322 +502,131 @@ const TableLoad: React.FC<TableLoadProps> = ({
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
         const jsonData = XLSX.utils.sheet_to_json(firstSheet) as SheetData
 
-        setImportFinished(false)
-
         if (jsonData.length === 0) {
           pushMessage('XxX Arquivo vazio.')
-          setSheetData([])
-          setSheetHeaderError([])
           return
         }
 
         const cols = Object.keys(jsonData[0] || {})
+        let validationResult: { ok: boolean; paused?: boolean }
+
         if (isCadastro) {
-          const headerValidation = validateEmployeeSheet(cols)
-          if (!headerValidation.valid) {
-            setSheetHeaderError(headerValidation.missingFields)
-            const missing = headerValidation.missingFields.join(', ')
-            pushMessage(`XxX Campos obrigatorios faltando: (${missing})`)
-            setStatus('error'); setNeutralLogStyle(true)
-            setSheetData([])
-            setColumns([])
-            return
-          }
+          validationResult = validateCadastroSheet(jsonData, cols, pushMessage)
         } else if (isFolha) {
-          const missingFolha = requiredFolhaHeaders.filter((h) => !cols.includes(h))
-          if (missingFolha.length > 0) {
-            setSheetHeaderError(missingFolha)
-            pushMessage(`XxX Campos obrigatorios faltando: (${missingFolha.join(', ')})`)
-            setStatus('error'); setNeutralLogStyle(true)
-            setSheetData([])
-            setColumns([])
-            return
-          }
-          setSheetHeaderError([])
+          validationResult = await validateFolhaSheet(jsonData, cols, pushMessage)
+        } else {
           pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
-
-          const regNumbers = Array.from(
-            new Set(
-              jsonData
-                .map((row) => Number(String(row['cadastro'] ?? '').replace(/\D/g, '')))
-                .filter((n) => !Number.isNaN(n))
-            )
-          )
-          const employeeRegs = await fetchEmployeeRegistrations(supabaseUrl, supabaseKey)
-          if (!employeeRegs.ok) {
-            pushMessage('XxX Erro ao validar colaboradores (employee).')
-            setSheetData([])
-            setColumns([])
-            setStatus('error'); setNeutralLogStyle(true)
-            return
-          }
-          const missingRegs = regNumbers.filter((r) => !employeeRegs.registrations.has(r))
-          if (missingRegs.length > 0) {
-            pushMessage(`XxX Colaboradores nao encontrado: (${missingRegs.join(', ')})`)
-            setSheetData([])
-            setColumns([])
-            setStatus('error'); setNeutralLogStyle(true)
-            setImportFinished(false)
-            return
-          }
-
-          const paymentValue = jsonData[0]?.['Pagamento']
-          const payrollCheck = await checkPayrollMonthExists(paymentValue, supabaseUrl, supabaseKey)
-          const refMonth = getRefMonthYear(paymentValue) || '-'
-          if (!payrollCheck.ok) {
-            pushMessage(`XxX Erro ao verificar folha ref. ${refMonth}.`)
-            setSheetData([])
-            setColumns([])
-            setStatus('error'); setNeutralLogStyle(true)
-            setImportFinished(false)
-            return
-          }
-          if (payrollCheck.exists) {
-            const text = `:) Pagamento ref. ${refMonth} ja consta em payroll.`
-            pushMessage(text)
-            setPayrollConflictRef(refMonth)
-            setPayrollConflictDate(paymentValue)
-            setStatus('idle'); setNeutralLogStyle(true)
-            setImportFinished(false)
-            return
-          }
-        } else {
-          setSheetHeaderError([])
-          pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
-        }
-        let payrollConflict = false
-        let payrollConflictRefValue = ''
-
-        if (isCadastro) {
-          const rowErrors: RowError[] = []
-          jsonData.forEach((row, index) => {
-            const validation = validateEmployeeRow(row)
-            if (!validation.valid) {
-              rowErrors.push({
-                rowIndex: index + 2,
-                errors: validation.errors,
-              })
-            }
-          })
-
-          if (rowErrors.length > 0) {
-            const errorFields = new Set<string>()
-            rowErrors.forEach((rowErr) => {
-              rowErr.errors.forEach((msg) => {
-                const field = extractFieldFromError(msg)
-                if (field) errorFields.add(field)
-              })
-            })
-            const fieldsText = Array.from(errorFields).join(', ')
-            const suffix = fieldsText ? ` (${fieldsText})` : ''
-            pushMessage(`:) ${rowErrors.length} linha(s) - ${suffix} corrigidas/validadas!`)
-          } else {
-            pushMessage(`OoO Todas as ${jsonData.length} linhas validadas com sucesso`)
-          }
-        } else {
-          // Validacao simples para FOLHA PGTO: campos obrigatorios NAO vazios
-          const folhaRowErrors: RowError[] = []
-          jsonData.forEach((row, index) => {
-            const missingFields: string[] = []
-            requiredFolhaHeaders.forEach((field) => {
-              if (!row[field] || String(row[field]).trim() === '') missingFields.push(field)
-            })
-            if (missingFields.length > 0) {
-              folhaRowErrors.push({
-                rowIndex: index + 2,
-                errors: missingFields.map((f) => `${f} Sao obrigatorio`),
-              })
-            }
-          })
-
-          if (folhaRowErrors.length > 0) {
-            const errorFields = new Set<string>()
-            folhaRowErrors.forEach((rowErr) => {
-              rowErr.errors.forEach((msg) => {
-                const field = requiredFolhaHeaders.find((f) => msg.startsWith(f))
-                if (field) errorFields.add(field)
-              })
-            })
-            const fieldsText = Array.from(errorFields).join(', ')
-            const suffix = fieldsText ? ` (${fieldsText})` : ''
-            pushMessage(`:) ${folhaRowErrors.length} linha(s) - ${suffix} corrigidas/validadas!`)
-          } else {
-            pushMessage(`OoO Todas as ${jsonData.length} linhas validadas com sucesso`)
-          }
+          dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: jsonData, columns: Object.keys(jsonData[0] || {}), messages: [] } })
+          validationResult = { ok: true }
         }
 
-        setSheetData(jsonData)
-        if (isCadastro) {
-          const displayColumns = REQUIRED_FIELDS.filter((field) => cols.includes(field))
-          setColumns(displayColumns)
-        } else if (isFolha) {
-          const folhaOrder = ['cadastro', 'Colaborador', 'Evento', 'Pagamento', 'Referencia', 'valor']
-          const ordered = folhaOrder.filter((c) => cols.includes(c))
-          const remaining = cols.filter((c) => !ordered.includes(c))
-          // Converter campos numumeros para inteiro
-          const normalized = jsonData.map((row) => {
-            const cadastroNum = row['cadastro'] ? Number(String(row['cadastro']).replace(/\D/g, '')) : row['cadastro']
-            const eventoNum = row['Evento'] ? Number(String(row['Evento']).replace(/\D/g, '')) : row['Evento']
-            const valorNum = row['valor']
-              ? Number(String(row['valor']).replace(/[^\d,-]/g, '').replace(',', '.'))
-              : row['valor']
-            const valorFormatado =
-              typeof valorNum === 'number' && !Number.isNaN(valorNum)
-                ? valorNum.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-                : row['valor']
-            return {
-              ...row,
-              cadastro: cadastroNum,
-              Evento: eventoNum,
-              valor: valorFormatado,
-            }
-          })
-          setSheetData(normalized)
-          setColumns([...ordered, ...remaining])
-          payrollConflictRefValue = getRefMonthYear(jsonData[0]?.['Pagamento']) || '-'
-          const payrollCheck = await checkPayrollMonthExists(jsonData[0]?.['Pagamento'], supabaseUrl, supabaseKey)
-          if (!payrollCheck.ok) {
-            pushMessage(`XxX Erro ao verificar folha ref. ${payrollConflictRefValue}.`)
-            setStatus('error'); setNeutralLogStyle(true)
-            setImportFinished(false)
-            return
-          }
-          payrollConflict = payrollCheck.exists
-        } else {
-          setColumns(Object.keys(jsonData[0] || {}))
+        if (validationResult.ok && !validationResult.paused) {
+          pushMessage(`OoO ${jsonData.length} linha(s) pronta pra ser enviada ao servidor`)
         }
-        if (!isFolha) setSheetData(jsonData)
-        if (payrollConflict) {
-          const text = `:) Pagamento ref. ${payrollConflictRefValue} ja consta em payroll.`
-          pushMessage(text)
-          setPayrollConflictRef(payrollConflictRefValue)
-          setPayrollConflictDate(jsonData[0]?.['Pagamento'] || null)
-          setStatus('idle'); setNeutralLogStyle(true)
-          setImportFinished(false)
-          return
-        }
-        pushMessage(`OoO ${jsonData.length} linha(s) pronta pra ser enviada ao servidor`)
       } catch (error) {
         console.error('Erro ao ler arquivo:', error)
         pushMessage('Erro ao ler o arquivo.')
-        setSheetData([])
-        setSheetHeaderError([])
-        setColumns([])
+        dispatch({ type: 'VALIDATION_ERROR', payload: { messages: ['Erro ao processar o arquivo.'] } })
       }
     }
     reader.readAsArrayBuffer(file)
   }
 
   const simulateImport = async () => {
-    if (!sheetType) {
-      setStatus('idle'); setNeutralLogStyle(true)
+    if (!sheetType || !selectedFile || !isSupportedSheet) {
       pushMessage('Escolha o tipo de planilha antes de importar.')
-      return
-    }
-    if (!selectedFile) {
-      setStatus('idle'); setNeutralLogStyle(true)
-      pushMessage('Selecione um arquivo antes de importar.')
-      return
-    }
-    if (!isSupportedSheet) {
-      setStatus('idle'); setNeutralLogStyle(true)
-      pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
+      dispatch({ type: 'SET_STATUS', payload: 'idle' })
       return
     }
 
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
     try {
-      setStatus('validating')
-      setProgress(20)
+      dispatch({ type: 'SET_STATUS', payload: 'validating' })
+      dispatch({ type: 'SET_PROGRESS', payload: 20 })
       pushMessage(`Validando a planilha "${selectedFile.name}"...`)
       await sleep(600)
 
-      setStatus('uploading')
-      setProgress(65)
+      dispatch({ type: 'SET_STATUS', payload: 'uploading' })
+      dispatch({ type: 'SET_PROGRESS', payload: 65 })
       pushMessage('Enviando dados para o servidor...')
       await sleep(900)
+
+      let finalMessages: string[] = []
 
       if (isCadastro) {
         const employeeResult = await insertEmployees(sheetData, userName, supabaseUrl, supabaseKey)
         if (!employeeResult.ok) {
-          setStatus('idle'); setNeutralLogStyle(true)
-          pushMessage('XxX Falha ao gravar tabela employee. Log NAO enviado.')
-          setImportFinished(false)
+          const employeeError = employeeResult.error ? `XxX Falha ao gravar employee: ${employeeResult.error}` : 'XxX Falha ao gravar employee.'
+          dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [employeeError] } })
           return
         }
-        pushMessage(`OoO Employee: ${employeeResult.updatedCount} atualizados, ${employeeResult.newCount} inseridos.`)
+        
+        const { updatedCount, newCount } = employeeResult
+        const parts: string[] = []
+        if (updatedCount > 0) parts.push(`${updatedCount} atualizado(s)`)
+        if (newCount > 0) parts.push(`${newCount} inserido(s)`)
+
+        if (parts.length > 0) {
+          finalMessages.push(`OoO Funcionários: ${parts.join(' e ')}.`)
+        } else {
+          finalMessages.push(`:) Nenhum funcionário novo ou alterado.`)
+        }
+        const logInsertedEmployees = await insertHistory(
+          {
+            table: 'employee',
+            actions: 'Inclusao',
+            file: selectedFile?.name || '-',
+            user: userName || '-',
+            type: 'Importado',
+          },
+          supabaseUrl,
+          supabaseKey
+        )
+        if (!logInsertedEmployees) {
+          pushMessage('XxX Falha ao registrar log de cadastro.')
+        }
+
+
       } else if (isFolha) {
         const payrollResult = await insertPayroll(sheetData, userName, supabaseUrl, supabaseKey)
         if (!payrollResult.ok) {
-          setStatus('idle'); setNeutralLogStyle(true)
-          pushMessage(`XxX Erro ao gravar tabela payroll: ${payrollResult.error || 'erro desconhecido'}`)
-          setImportFinished(false)
+          const payrollError = payrollResult.error ? `XxX Erro ao gravar tabela payroll: ${payrollResult.error}` : 'XxX Erro ao gravar tabela payroll.'
+          dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [payrollError] } })
           return
         }
-        pushMessage(`OoO Payroll: ${payrollResult.inserted} linha(s) inseridas.`)
+        finalMessages.push(`OoO Payroll: ${payrollResult.inserted} linha(s) inseridas.`)
         await insertHistory(
           {
-            registration: `Folha Pgto Ref.: ${getRefMonthYear(sheetData[0]?.['Pagamento']) || '-'}`,
+            table: 'payroll',
             actions: 'Inclusao',
-            date: formatNow(),
             file: selectedFile?.name || '-',
             user: userName || '-',
+            type: 'Importado',
           },
           supabaseUrl,
           supabaseKey
         )
       }
 
-      setStatus('done')
-      setProgress(100)
-      pushMessage('OoO Carga da tabela concluida com sucesso.')
+      finalMessages.push('OoO Carga da tabela concluida com sucesso.')
+      dispatch({ type: 'IMPORT_SUCCESS', payload: { messages: finalMessages } })
 
-      if (isCadastro) {
-        await insertHistory(
-          {
-            registration: 'Cadastro de Funcionario',
-            actions: 'Inclusao',
-            date: formatNow(),
-            file: selectedFile?.name || '-',
-            user: userName || '-',
-          },
-          supabaseUrl,
-          supabaseKey
-        )
-      }
-      const list = await fetchHistory(supabaseUrl, supabaseKey)
-      setHistory(
-        list.map((item) => ({
-          ...item,
-          date: formatDateFromDb(item.date),
-        }))
-      )
-      setImportFinished(true)
+      await fetchAndUpdateHistory()
     } catch (error) {
       console.error('Erro na importacao simulada:', error)
-      setStatus('idle'); setNeutralLogStyle(true)
-      pushMessage('Erro ao importar. Tente novamente.')
-      setImportFinished(false)
+      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: ['Erro ao importar. Tente novamente.'] } })
     }
   }
 
   const resetForm = () => {
-    setSelectedFile(null)
-    setSheetType('')
-    setStatus('idle'); setNeutralLogStyle(true)
-    setProgress(0)
-    setMessages([])
-    setSheetData([])
-    setSheetHeaderError([])
-    setImportFinished(false)
-    setColumns([])
+    dispatch({ type: 'RESET_FORM' })
     resetFileInput()
   }
 
   const getStatusColor = () => {
     if (status === 'error') return 'text-amber-300'
-    if (status === 'done') return 'text-emerald-300'
+    if (status === 'done') return 'text-emerald-400'
     return 'text-white/80'
   }
 
@@ -538,6 +646,13 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
   return (
     <>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          className: 'bg-slate-800 text-white border border-white/10 shadow-lg',
+          success: { iconTheme: { primary: '#22c55e', secondary: 'white' } },
+          error: { iconTheme: { primary: '#f43f5e', secondary: 'white' } },
+        }} />
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -565,408 +680,56 @@ const TableLoad: React.FC<TableLoadProps> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-6 bg-slate-900/70 border border-white/10 rounded-xl p-4 space-y-4">
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
-                <div>
-                  <p className="text-white font-semibold leading-tight">Importar planilha</p>
-                  <p className="text-white/60 text-xs">Formatos aceitos: XLSX, CSV.</p>
-                </div>
-              </div>
-              {selectedFile && (
-                <button
-                  className="text-white/60 hover:text-white transition-colors"
-                  onClick={() => handleFileSelect(null)}
-                  title="Limpar arquivo"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              )}
-            </div>
-
-            <div className="flex flex-row items-end gap-3 flex-wrap w-full">
-              <div className="flex-1 min-w-[240px]">
-                <label className="block text-xs text-white/70 mb-1">Tipo de planilha</label>
-                <select
-                  value={sheetType}
-                  onChange={(e) => setSheetType(e.target.value as any)}
-                  className="w-full bg-white/5 text-white text-sm border border-white/10 rounded-lg px-3 py-2 outline-none focus:border-emerald-400"
-                >
-                  <option value="" className="bg-[#202422] text-white">
-                    Selecione
-                  </option>
-                  <option value="CADASTRO" className="bg-[#202422] text-white">
-                    CADASTRO
-                  </option>
-                  <option value="FOLHA PGTO" className="bg-[#202422] text-white">
-                    FOLHA PGTO
-                  </option>
-                  <option value="HORAS EXTRAS" className="bg-[#202422] text-white">
-                    HORAS EXTRAS
-                  </option>
-                </select>
-              </div>
-              {(sheetType === 'CADASTRO' || sheetType === 'FOLHA PGTO') && (
-                <div className="flex items-center gap-3 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-3 py-2 rounded-md bg-transparent border border-emerald-500/60 text-emerald-300 font-semibold hover:bg-emerald-500/20 hover:border-emerald-400/80 transition-all flex items-center gap-2 whitespace-nowrap"
-                    title="Selecionar arquivo para upload"
-                  >
-                    <Upload className="w-5 h-5" />
-                    <span className="text-sm">Upload</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div
-            className={`w-full border-2 border-dashed rounded-md p-0 flex flex-col items-center justify-start gap-3 ${
-              status === 'error' && !neutralLogStyle ? 'border-amber-400/60 bg-amber-500/5' : 'border-white/15 bg-white/5'
-            } overflow-hidden`}
-            style={{ maxHeight: '180px', minHeight: '180px', backgroundColor: '#0c163d', color: '#cddcff' }}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              accept=".xlsx,.xls,.csv"
-              onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
-            />
-            <div className="w-full h-full flex flex-col gap-0">
-              <div className="flex items-center justify-between gap-4 px-2 py-2 border-b border-white/10">
-                <div className="flex items-center gap-2">
-                  <CircleCheckBig className="w-4 h-4 text-emerald-300" />
-                  <p className="text-white font-semibold text-sm">Status Operacao</p>
-                </div>
-                <button
-                  type="button"
-                  className="flex items-center gap-2 text-white/80 text-xs cursor-pointer select-none"
-                  onClick={() => setShowPreview((prev) => !prev)}
-                  onKeyDown={(e) => e.key === 'Enter' && setShowPreview((prev) => !prev)}
-                  aria-pressed={showPreview}
-                >
-                  {showPreview ? (
-                    <CircleCheckBig className="w-4 h-4 text-emerald-300" />
-                  ) : (
-                    <Circle className="w-4 h-4 text-white" />
-                  )}
-                  <span className={showPreview ? 'text-emerald-200' : 'text-white/80'}>Ver tabela</span>
-                </button>
-              </div>
-              <div
-                className="custom-scroll log-scroll flex-1 min-h-0 max-h-[135px] overflow-y-auto"
-              >
-                <ul className="text-white/80 text-xs space-y-1 list-none p-0 m-0">
-                  <li className="text-white/50" aria-label="Aguardando novas mensagens">
-                    <span className="blinking-cursor" aria-hidden="true" />
-                  </li>
-{messages.map((msg, idx) => (
-  <li key={idx}>
-    <LogItem message={msg} />
-  </li>
-))}
-
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm text-white/70">
-              <span>
-                Status: <span className={getStatusColor()}>{statusLabel[status]}</span>
-              </span>
-              <span>{progress}%</span>
-            </div>
-            <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
-              <div
-                className={`h-2 rounded-full transition-all duration-500 ${
-                  status === 'done' ? 'bg-emerald-400' : status === 'error' ? 'bg-amber-300' : 'bg-emerald-300/80'
-                }`}
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-
-            <div className="flex items-button justify-center gap-2">
-              {!hideImportButton && (
-                <button
-                  type="button"
-                  onClick={simulateImport}
-                  disabled={status === 'uploading' || status === 'validating'}
-                  className="px-4 py-2 rounded-md bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {status === 'uploading' || status === 'validating' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <ClipboardList className="w-4 h-4" />
-                  )}
-                  Importar
-                </button>
-              )}
-
-              <button
-                type="button"
-                className="px-4 py-2 rounded-md bg-white/10 border border-white/15 text-white hover:bg-white/15 transition-colors"
-                onClick={resetForm}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="lg:col-span-6 lg:sticky lg:top-24">
-            <div className="bg-slate-900/70 border border-white/10 rounded-xl h-full overflow-hidden">
-            <div className="overflow-x-auto overflow-y-auto max-h-[440px] min-h-0 custom-scroll">
-              <table className="w-full text-[11px]">
-                <thead className="sticky top-0 z-10 bg-emerald-800/95">
-                  <tr className="border-b border-white/10">
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-center">DATA</th>
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-left">BANCO DADOS</th>
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-center">ACAO</th>
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-left">ARQUIVO</th>
-                    <th className="px-1 py-1.5 text-white/70 font-semibold text-left">USUARIO</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/10 text-[11px]">
-                  {history.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-1 py-3 text-white/50 text-xs text-center">
-                        Nenhum registro de Carga da tabela ainda.
-                      </td>
-                    </tr>
-                  ) : (
-                    history.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-white/5 transition-colors">
-                        <td className="px-1 py-1.5 text-white/80 text-center text-[11px]">{item.date}</td>
-                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-left">{item.banco}</td>
-                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-center">{renderActionIcon(item.acao)}</td>
-                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-left">{item.arquivo}</td>
-                        <td className="px-1 py-1.5 text-white/80 text-[11px] text-left">{item.usuario}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <ImportForm
+          state={state}
+          dispatch={dispatch}
+          fileInputRef={fileInputRef}
+          onFileSelect={handleFileSelect}
+          onImport={simulateImport}
+          onReset={resetForm}
+          isSupportedSheet={isSupportedSheet}
+          hideImportButton={hideImportButton}
+          statusLabel={statusLabel}
+          getStatusColor={getStatusColor}
+          cadastroHeaders={REQUIRED_FIELDS}
+          folhaHeaders={requiredFolhaHeaders}
+        />
+        <HistoryTable
+          history={paginatedHistory}
+          renderActionIcon={renderActionIcon}
+          isLoading={isHistoryLoading}
+          error={historyError}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={handlePageChange}
+          searchQuery={historySearchQuery}
+          onSearchChange={setHistorySearchQuery}
+          sortConfig={sortConfig}
+          onSort={handleSort}
+        />
       </div>
       </div>
 
-      {showPreview && sheetData.length > 0 && (
-        <div className="bg-slate-900/70 border border-white/10 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2 mb-2">
-            <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
-            <p className="text-white font-semibold">Dados carregados ({sheetData.length} linha(s))</p>
-          </div>
-          <div className="overflow-x-auto border border-white/10 rounded-lg max-h-[300px] overflow-y-auto">
-            <table className="w-full text-[11px] text-white/80">
-              <thead className="bg-lime-400/20 border-b border-white/10 sticky top-0 z-20 text-slate-900">
-                <tr>
-                  {columns.map((col) => (
-                    <th
-                      key={col}
-                      className="px-3 py-2 font-semibold text-white/90 uppercase tracking-wide text-center"
-                    >
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sheetData.map((row, idx) => (
-                  <tr key={idx} className={idx % 2 === 0 ? 'bg-white/5' : 'bg-transparent'}>
-                    {columns.map((col) => {
-                      const colKey = col.toLowerCase()
-                      const isValor = isFolha && colKey === 'valor'
-                      const isCenter =
-                        isFolha && ['cadastro', 'evento', 'pagamento', 'Referencia'].includes(colKey)
-                      const alignClass = isValor ? 'text-right' : isCenter ? 'text-center' : 'text-left'
-                      return (
-                        <td
-                          key={`${idx}-${col}`}
-                          className={`px-3 py-2 text-white/70 truncate max-w-xs ${alignClass}`}
-                        >
-                          {row[col] ?? '-'}
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      <DataPreview
+        show={showPreview}
+        data={sheetData}
+        columns={columns}
+        isFolha={sheetType === 'FOLHA PGTO'}
+        rowErrors={rowErrors} />
 
-      {payrollConflictRef && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
-          <div className="relative w-full max-w-xl bg-[#0d1425] border border-white/10 rounded-2xl shadow-[0_25px_80px_-20px_rgba(0,0,0,0.8)] overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-white/05 via-rose-500/8 to-transparent pointer-events-none" />
-            <div className="relative p-6 space-y-5">
-              <div className="flex items-start gap-4">
-                <div className="w-14 h-14 rounded-full bg-rose-500/15 border border-rose-400/60 flex items-center justify-center shrink-0">
-                  <AlertTriangle className="w-8 h-8 text-rose-400" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-white text-xl font-semibold">Excluir Fechamento!</h3>
-                  <p className="text-white/80 text-sm mt-2 leading-relaxed">
-                    Essa Folha de Pgto {payrollConflictRef} ja foi fechada, porem voce pode exclui-la e inserir novos dados.
-                    Isso ira excluir todos os dados definidivamente.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-4 flex items-end gap-4 flex-wrap justify-between">
-                <div className="w-full max-w-[220px]">
-                  <label className="text-white/70 text-xs mb-1 block">
-                    Senha de confirmacao <span className="text-rose-400">{Math.min(payrollPasswordAttempts, 3)}/3</span>
-                  </label>
-                  <input
-                    type="password"
-                    value={payrollConflictPassword}
-                    onChange={(e) => {
-                      setPayrollConflictPassword(e.target.value)
-                      if (payrollPasswordErrorType) setPayrollPasswordErrorType(null)
-                    }}
-                    className={`w-full bg-white/5 text-white text-sm border rounded-lg px-3 py-2.5 outline-none focus:border-emerald-400 ${
-                      payrollPasswordErrorType ? 'border-rose-400' : 'border-white/10'
-                    }`}
-                    placeholder="Digite sua senha"
-                 />
-                  {payrollPasswordErrorType === 'required' && (
-                    <div className="flex items-center gap-1 text-amber-300 text-xs mt-1">
-                      <TriangleAlert className="w-4 h-4" />
-                      <span>Obrigatorio!!!</span>
-                    </div>
-                  )}
-                  {payrollPasswordErrorType === 'invalid' && (
-                    <div className="flex items-center gap-1 text-rose-300 text-xs mt-1">
-                      <TriangleAlert className="w-4 h-4" />
-                      <span>Senha Incorreta - {Math.max(payrollPasswordAttempts, 1)}</span>
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 ml-auto">
-                  <button
-                    type="button"
-                    className="px-5 py-2.5 h-[44px] rounded-lg bg-white/5 border border-white/15 text-white hover:bg-white/10 transition-colors"
-                    onClick={() => {
-                      setPayrollConflictRef(null)
-                      setPayrollConflictDate(null)
-                      pushMessage('XxX Voce cancelo a operacao')
-                      setStatus('error'); setNeutralLogStyle(true)
-                      setPayrollPasswordAttempts(0)
-                      setPayrollPasswordErrorType(null)
-                      setPayrollConflictPassword('')
-                      setPayrollDeletedSuccessfully(false)
-                    }}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    className="px-5 py-2.5 h-[44px] rounded-lg bg-rose-500 text-white font-semibold hover:bg-rose-600 transition-colors"
-                    onClick={async () => {
-                      const pwd = payrollConflictPassword.trim()
-                      if (!pwd) {
-                        setPayrollPasswordErrorType('required')
-                        return
-                      }
-                      if (!sessionUser) {
-                        pushMessage('XxX Sessao invalida. Fa�a login novamente.')
-                        return
-                      }
-                      const isValid = await verifyPassword(pwd, sessionUser.password)
-                      if (!isValid) {
-                        const nextAttempts = payrollPasswordAttempts + 1
-                        setPayrollPasswordAttempts(nextAttempts)
-                        setPayrollPasswordErrorType('invalid')
-                        if (nextAttempts >= 3) {
-                          pushMessage('XxX Parece que voce nao tem acesso a exclusao')
-                          setStatus('error'); setNeutralLogStyle(true)
-                          setPayrollConflictRef(null)
-                          setPayrollConflictPassword('')
-                          setPayrollPasswordAttempts(0)
-                          setPayrollPasswordErrorType(null)
-                        }
-                        return
-                      }
-                      // Executar exclusão
-                      if (payrollConflictRef && payrollConflictDate) {
-                        pushMessage(`Excluindo fechamento da folha pgto : ${payrollConflictRef}`)
-                        setStatus('uploading')
-                        try {
-                          const deleteResult = await deletePayrollByMonth(payrollConflictDate, supabaseUrl, supabaseKey)
-                          if (!deleteResult.ok) {
-                            setStatus('error')
-                            setNeutralLogStyle(true)
-                            pushMessage(`XxX Erro ao excluir dados: ${deleteResult.error || 'erro desconhecido'}`)
-                            setPayrollConflictRef(null)
-                            setPayrollConflictDate(null)
-                            setPayrollConflictPassword('')
-                            setPayrollPasswordAttempts(0)
-                            setPayrollPasswordErrorType(null)
-                            setPayrollDeletedSuccessfully(false)
-                            return
-                          }
-                          pushMessage(`OoO ${deleteResult.deleted} registro(s) excluido(s) da folha ref. ${payrollConflictRef}`)
-                          
-                          // Registrar ação no log
-                          await insertHistory(
-                            {
-                              registration: `Folha Pgto Ref.: ${payrollConflictRef}`,
-                              actions: 'Delete',
-                              date: formatNow(),
-                              file: selectedFile?.name || '-',
-                              user: userName || '-',
-                            },
-                            supabaseUrl,
-                            supabaseKey
-                          )
-                          
-                          // Atualizar histórico
-                          const list = await fetchHistory(supabaseUrl, supabaseKey)
-                          setHistory(
-                            list.map((item) => ({
-                              ...item,
-                              date: formatDateFromDb(item.date),
-                            }))
-                          )
-                          
-                          setStatus('done')
-                          setPayrollDeletedSuccessfully(true)
-                          setImportFinished(false)
-                          pushMessage('OoO Exclusão concluida. Voce pode agora importar os novos dados.')
-                        } catch (error) {
-                          setStatus('error')
-                          setNeutralLogStyle(true)
-                          pushMessage(`XxX Erro ao excluir: ${(error as Error).message}`)
-                        }
-                      }
-                      setPayrollConflictRef(null)
-                      setPayrollConflictDate(null)
-                      setPayrollConflictPassword('')
-                      setPayrollPasswordAttempts(0)
-                      setPayrollPasswordErrorType(null)
-                    }}
-                  >
-                    Excluir
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <PayrollConflictModal
+        state={state}
+        dispatch={dispatch}
+        pushMessage={pushMessage}
+        onHistoryUpdate={fetchAndUpdateHistory}
+        userName={userName}
+        supabaseUrl={supabaseUrl}
+        supabaseKey={supabaseKey}
+      />
     </>
   )
 }
 
 export default TableLoad
+
 

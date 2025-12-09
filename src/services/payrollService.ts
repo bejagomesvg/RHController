@@ -5,6 +5,7 @@ export interface PayrollPayload {
   name: string | null
   events_payroll: number | null
   references_payroll: number | null
+  volue_payroll: number | null
   date_payroll: string | null
   type_registration: string
   user_registration: string | null
@@ -34,6 +35,30 @@ const parseNumber = (val: any): number | null => {
   return Number.isNaN(num) ? null : num
 }
 
+const parseMoney = (val: any): number | null => {
+  if (val === null || val === undefined || val === '') return null
+  if (typeof val === 'number') return Number.isFinite(val) ? val : null
+
+  const raw = String(val).trim()
+  if (!raw) return null
+
+  const hasComma = raw.includes(',')
+  const hasDot = raw.includes('.')
+
+  let normalized = raw
+  if (hasComma && hasDot) {
+    normalized = raw.replace(/\./g, '').replace(',', '.')
+  } else if (hasComma && !hasDot) {
+    normalized = raw.replace(',', '.')
+  } else {
+    const dotCount = (raw.match(/\./g) || []).length
+    normalized = dotCount > 1 ? raw.replace(/\./g, '') : raw
+  }
+
+  const parsed = Number(normalized)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
 const parseDecimal = (val: any): number | null => {
   if (val === null || val === undefined || val === '') return null
   const num = Number(String(val).replace(/[^\d,-]/g, '').replace(',', '.'))
@@ -41,8 +66,27 @@ const parseDecimal = (val: any): number | null => {
 }
 
 const parseDateIso = (val: any): string | null => {
+  // Date object
+  if (val instanceof Date && !Number.isNaN(val.getTime())) {
+    return val.toISOString().slice(0, 10)
+  }
+
+  // Numbers / formatted strings handled by shared formatter
   const formatted = formatDate(val)
-  return formatted || null
+  if (formatted) return formatted
+
+  // Accept "MM/YYYY" or "MM-YYYY" (with optional time suffix)
+  if (typeof val === 'string') {
+    const trimmed = val.trim().split(/\s+/)[0] // drop any time suffix
+    const match = trimmed.match(/^(\d{1,2})[\/-](\d{4})$/)
+    if (match) {
+      const month = match[1].padStart(2, '0')
+      const year = match[2]
+      return `${year}-${month}-01`
+    }
+  }
+
+  return null
 }
 
 export const insertPayroll = async (
@@ -60,10 +104,11 @@ export const insertPayroll = async (
     name: row['Colaborador'] ? String(row['Colaborador']).trim() : null,
     events_payroll: parseNumber(row['Evento']),
     references_payroll: parseDecimal(row['Referencia']),
+    volue_payroll: parseMoney(row['_valorRaw'] ?? row['valor'] ?? row['Valor'] ?? row['VALOR']),
     date_payroll: parseDateIso(row['Pagamento']),
-      type_registration: 'Importado',
-      user_registration: userName || null,
-      date_registration: new Date().toISOString(),
+    type_registration: 'Importado',
+    user_registration: userName || null,
+    date_registration: new Date().toISOString(),
     }))
 
     const insertUrl = new URL(`${supabaseUrl}/rest/v1/payroll`)
@@ -99,7 +144,7 @@ export const checkPayrollMonthExists = async (
     return { ok: false, exists: false, error: 'Missing Supabase credentials' }
   }
 
-  const iso = formatDate(paymentDate)
+  const iso = parseDateIso(paymentDate)
   if (!iso) {
     return { ok: false, exists: false, error: 'Data de pagamento invalida' }
   }
@@ -113,10 +158,10 @@ export const checkPayrollMonthExists = async (
 
   try {
     const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
-    url.searchParams.set('select', 'date_payroll')
+    url.searchParams.append('select', 'date_payroll')
     url.searchParams.append('date_payroll', `gte.${monthStart.toISOString()}`)
     url.searchParams.append('date_payroll', `lt.${nextMonth.toISOString()}`)
-    url.searchParams.set('limit', '1')
+    url.searchParams.append('limit', '1')
 
     const res = await fetch(url.toString(), {
       headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
@@ -140,7 +185,7 @@ export const deletePayrollByMonth = async (
     return { ok: false, deleted: 0, error: 'Missing Supabase credentials' }
   }
 
-  const iso = formatDate(paymentDate)
+  const iso = parseDateIso(paymentDate)
   if (!iso) return { ok: false, deleted: 0, error: 'Data de pagamento invalida' }
 
   const base = new Date(iso)
