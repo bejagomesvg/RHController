@@ -7,6 +7,7 @@ interface DownloadTemplateButtonProps {
   sheetType: SheetType
   cadastroHeaders: string[]
   folhaHeaders: string[]
+  overtimeHeaders: string[]
   showLabel?: boolean
 }
 
@@ -14,6 +15,7 @@ const DownloadTemplateButton: React.FC<DownloadTemplateButtonProps> = ({
   sheetType,
   cadastroHeaders,
   folhaHeaders,
+  overtimeHeaders,
   showLabel = true,
 }) => {
   const handleDownload = () => {
@@ -28,6 +30,9 @@ const DownloadTemplateButton: React.FC<DownloadTemplateButtonProps> = ({
     } else if (sheetType === 'FOLHA PGTO') {
       headers = folhaHeaders
       fileName = 'modelo_folha_pgto.xlsx'
+    } else if (sheetType === 'HORAS EXTRAS') {
+      headers = overtimeHeaders
+      fileName = 'modelo_horas_extras.xlsx'
     } else {
       return // No template for this type
     }

@@ -63,7 +63,7 @@ const PayrollConflictModal: React.FC<PayrollConflictModalProps> = ({
           dispatch({ type: 'RESET_PAYROLL_CONFLICT' })
           return
         }
-        pushMessage(`OoO ${deleteResult.deleted} registro(s) excluido(s) da folha ref. ${payrollConflictRef}`)
+        pushMessage(`OoO Total ${deleteResult.deleted} registro(s) excluido(s) da folha ref. ${payrollConflictRef}`)
         await insertHistory({
             table: payrollConflictRef ? `payroll Ref. ${payrollConflictRef}` : 'payroll',
             actions: 'Delete',

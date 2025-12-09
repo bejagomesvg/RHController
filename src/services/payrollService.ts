@@ -149,18 +149,20 @@ export const checkPayrollMonthExists = async (
     return { ok: false, exists: false, error: 'Data de pagamento invalida' }
   }
 
+  // Usa yyyy-mm-01 como chave de referência do mês
   const start = new Date(iso)
   if (Number.isNaN(start.getTime())) {
     return { ok: false, exists: false, error: 'Data de pagamento invalida' }
   }
-  const monthStart = new Date(Date.UTC(start.getFullYear(), start.getMonth(), 1, 0, 0, 0))
-  const nextMonth = new Date(Date.UTC(start.getFullYear(), start.getMonth() + 1, 1, 0, 0, 0))
+  const monthStart = `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, '0')}-01`
+  const nextMonthDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1, 0, 0, 0))
+  const nextMonth = `${nextMonthDate.getUTCFullYear()}-${String(nextMonthDate.getUTCMonth() + 1).padStart(2, '0')}-01`
 
   try {
     const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
     url.searchParams.append('select', 'date_payroll')
-    url.searchParams.append('date_payroll', `gte.${monthStart.toISOString()}`)
-    url.searchParams.append('date_payroll', `lt.${nextMonth.toISOString()}`)
+    url.searchParams.append('date_payroll', `gte.${monthStart}`)
+    url.searchParams.append('date_payroll', `lt.${nextMonth}`)
     url.searchParams.append('limit', '1')
 
     const res = await fetch(url.toString(), {
@@ -191,17 +193,18 @@ export const deletePayrollByMonth = async (
   const base = new Date(iso)
   if (Number.isNaN(base.getTime())) return { ok: false, deleted: 0, error: 'Data de pagamento invalida' }
 
-  const monthStart = new Date(Date.UTC(base.getFullYear(), base.getMonth(), 1, 0, 0, 0))
-  const nextMonth = new Date(Date.UTC(base.getFullYear(), base.getMonth() + 1, 1, 0, 0, 0))
+  const monthStart = `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, '0')}-01`
+  const nextMonthDate = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 1, 0, 0, 0))
+  const nextMonth = `${nextMonthDate.getUTCFullYear()}-${String(nextMonthDate.getUTCMonth() + 1).padStart(2, '0')}-01`
 
   try {
     const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
-    url.searchParams.append('date_payroll', `gte.${monthStart.toISOString()}`)
-    url.searchParams.append('date_payroll', `lt.${nextMonth.toISOString()}`)
+    url.searchParams.append('date_payroll', `gte.${monthStart}`)
+    url.searchParams.append('date_payroll', `lt.${nextMonth}`)
 
     const res = await fetch(url.toString(), {
       method: 'DELETE',
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, Prefer: 'count=exact' },
     })
     if (!res.ok) {
       return { ok: false, deleted: 0, error: await res.text() }

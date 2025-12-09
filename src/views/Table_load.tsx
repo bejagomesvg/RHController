@@ -7,15 +7,17 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { validateEmployeeSheet, validateEmployeeRow, REQUIRED_FIELDS } from '../utils/employeeParser'
+import { validateEmployeeSheet, validateEmployeeRow, REQUIRED_FIELDS, formatDate } from '../utils/employeeParser'
 import { insertEmployees, fetchEmployeeRegistrations } from '../services/employeeService'
 import { checkPayrollMonthExists, insertPayroll } from '../services/payrollService'
+import { insertOvertime, checkOvertimeDatesExist } from '../services/overtimeService'
 import type { HistoryEntry } from '../services/logService'
 import { fetchHistory, insertHistory } from '../services/logService'
 import ImportForm from '../components/ImportForm'
 import HistoryTable from '../components/HistoryTable'
 import DataPreview from '../components/DataPreview'
 import PayrollConflictModal from '../components/PayrollConflictModal'
+import OvertimeConflictModal from '../components/OvertimeConflictModal'
 
 export interface RowError {
   rowIndex: number
@@ -45,6 +47,11 @@ export interface State {
   payrollPasswordAttempts: number
   payrollConflictDate: string | null
   payrollDeletedSuccessfully: boolean
+  overtimeConflictRef: string | null
+  overtimeConflictDate: string | null
+  overtimePassword: string
+  overtimePasswordError: 'required' | 'invalid' | null
+  overtimePasswordAttempts: number
 }
 
 export type Action =
@@ -66,12 +73,19 @@ export type Action =
   | { type: 'PAYROLL_DELETE_SUCCESS' }
   | { type: 'IMPORT_SUCCESS'; payload: { messages: string[] } }
   | { type: 'IMPORT_FAILURE'; payload: { messages: string[] } }
+  | { type: 'SET_OVERTIME_CONFLICT'; payload: { ref: string; date: string } }
+  | { type: 'UPDATE_OVERTIME_PASSWORD'; payload: string }
+  | { type: 'SET_OVERTIME_PASSWORD_ERROR'; payload: 'required' | 'invalid' | null }
+  | { type: 'INCREMENT_OVERTIME_PASSWORD_ATTEMPTS' }
+  | { type: 'RESET_OVERTIME_CONFLICT' }
+  | { type: 'OVERTIME_DELETE_SUCCESS' }
 
 const initialState: State = {
   sheetType: '', selectedFile: null, status: 'idle', progress: 0, messages: [],
   sheetData: [], columns: [], sheetHeaderError: [], rowErrors: [], importFinished: false, showPreview: false,
   payrollConflictRef: null, payrollConflictPassword: '', payrollPasswordErrorType: null,
   payrollPasswordAttempts: 0, payrollConflictDate: null, payrollDeletedSuccessfully: false,
+  overtimeConflictRef: null, overtimeConflictDate: null, overtimePassword: '', overtimePasswordError: null, overtimePasswordAttempts: 0,
 }
 
 interface TableLoadProps {
@@ -120,6 +134,18 @@ const tableLoadReducer = (state: State, action: Action): State => {
       return { ...state, status: 'done', progress: 100, importFinished: true, messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
     case 'IMPORT_FAILURE':
       return { ...state, status: 'error', importFinished: false, messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
+    case 'SET_OVERTIME_CONFLICT':
+      return { ...state, overtimeConflictRef: action.payload.ref, overtimeConflictDate: action.payload.date, status: 'idle', importFinished: false }
+    case 'UPDATE_OVERTIME_PASSWORD':
+      return { ...state, overtimePassword: action.payload, overtimePasswordError: null }
+    case 'SET_OVERTIME_PASSWORD_ERROR':
+      return { ...state, overtimePasswordError: action.payload }
+    case 'INCREMENT_OVERTIME_PASSWORD_ATTEMPTS':
+      return { ...state, overtimePasswordAttempts: state.overtimePasswordAttempts + 1 }
+    case 'RESET_OVERTIME_CONFLICT':
+      return { ...state, overtimeConflictRef: null, overtimeConflictDate: null, overtimePassword: '', overtimePasswordAttempts: 0, overtimePasswordError: null }
+    case 'OVERTIME_DELETE_SUCCESS':
+      return { ...state, status: 'done', importFinished: false, overtimeConflictRef: null, overtimeConflictDate: null, overtimePassword: '', overtimePasswordAttempts: 0, overtimePasswordError: null }
     default:
       return state
   }
@@ -161,10 +187,50 @@ const getRefMonthYear = (value: any): string => {
   return `${padNumber(d.getMonth() + 1)}/${d.getFullYear()}`
 }
 
+const getRefFullDate = (value: any): string => {
+  if (!value) return ''
+
+  // ISO date yyyy-mm-dd (evita shift de fuso)
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    const [y, m, d] = value.split('-')
+    return `${d}/${m}/${y}`
+  }
+
+  if (typeof value === 'number' && value > 1) {
+    const excelEpoch = new Date(1899, 11, 30)
+    const d = new Date(excelEpoch.getTime() + value * 86400000)
+    if (!Number.isNaN(d.getTime())) {
+      return `${padNumber(d.getUTCDate())}/${padNumber(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`
+    }
+  }
+
+  const dateStr = String(value)
+  const parts = dateStr.split(/[/.-]/)
+  let d: Date
+  if (parts.length === 3 && parts[2].length === 4) {
+    d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`)
+  } else {
+    d = new Date(value)
+  }
+
+  if (Number.isNaN(d.getTime())) return ''
+  return `${padNumber(d.getDate())}/${padNumber(d.getMonth() + 1)}/${d.getFullYear()}`
+}
+
+const formatIsoDateDisplay = (iso?: string): string => {
+  if (!iso) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split('-')
+    return `${d}/${m}/${y}`
+  }
+  return getRefFullDate(iso)
+}
+
 const extractRegistrationNumbers = (jsonData: SheetData): number[] => {
   const registrationSet = new Set<number>()
   jsonData.forEach(row => {
-    const rawValue = row['cadastro']
+    const cadastroKey = Object.keys(row).find((k) => k.toLowerCase() === 'cadastro')
+    const rawValue = cadastroKey ? row[cadastroKey] : row['cadastro']
     if (rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== '') {
       const num = Number(String(rawValue).replace(/\D/g, ''))
       if (!Number.isNaN(num) && num > 0) {
@@ -194,6 +260,39 @@ const convertExcelDate = (serial: number): string => {
   return `${padNumber(date.getUTCDate())}/${padNumber(date.getUTCMonth() + 1)}/${date.getUTCFullYear()}`;
 }
 
+const formatTimePreview = (val: any): string => {
+  if (val === null || val === undefined || val === '') return '-'
+
+  const pad = (n: number) => String(n).padStart(2, '0')
+
+  // Numero vindo do Excel: 0-1 é fração do dia, >1 são dias (26h => 1.0833 dia)
+  if (typeof val === 'number') {
+    const totalHours = val * 24
+    const hours = Math.floor(totalHours)
+    const minutes = Math.floor((totalHours - hours) * 60)
+    return `${hours}:${pad(minutes)}`
+  }
+
+  const raw = String(val).trim()
+  if (!raw) return '-'
+
+  const colonMatch = raw.match(/^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$/)
+  if (colonMatch) {
+    const [, h, m] = colonMatch
+    return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`
+  }
+
+  const decimal = Number(raw.replace(',', '.'))
+  if (!Number.isNaN(decimal)) {
+    const totalSeconds = Math.round(decimal * 3600)
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    return `${hours}:${pad(minutes)}`
+  }
+
+  return raw
+}
+
 const TableLoad: React.FC<TableLoadProps> = ({
   onBack,
   userName = 'Usuario',
@@ -202,15 +301,19 @@ const TableLoad: React.FC<TableLoadProps> = ({
   description = 'Importar massa de dados via planilha.',
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const supportedSheets = ['CADASTRO', 'FOLHA PGTO'] as const
+  const supportedSheets = ['CADASTRO', 'FOLHA PGTO', 'HORAS EXTRAS'] as const
   const requiredFolhaHeaders = ['cadastro', 'Colaborador', 'Evento', 'Pagamento', 'Referencia', 'valor']
-  const ITEMS_PER_PAGE = 11
+  const requiredOvertimeHeaders = ['Data', 'Cadastro', 'Nome', 'Hrs 100', 'Hrs 60']
+  const ITEMS_PER_PAGE = 10
 
   const [state, dispatch] = useReducer(tableLoadReducer, initialState)
   const {
     sheetType, selectedFile, status, messages, sheetData, columns, sheetHeaderError,
-    importFinished, showPreview, payrollConflictRef, payrollDeletedSuccessfully, rowErrors
+    importFinished, showPreview, payrollConflictRef, payrollDeletedSuccessfully, rowErrors,
+    overtimeConflictRef,
   } = state
+
+  const employeeRegsCache = useRef<Set<number> | null>(null)
 
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [isHistoryLoading, setIsHistoryLoading] = useState(true)
@@ -224,11 +327,12 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
-  const isSupportedSheet = supportedSheets.includes(sheetType as 'CADASTRO' | 'FOLHA PGTO')
+  const isSupportedSheet = supportedSheets.includes(sheetType as 'CADASTRO' | 'FOLHA PGTO' | 'HORAS EXTRAS')
   const isCadastro = sheetType === 'CADASTRO'
   const isFolha = sheetType === 'FOLHA PGTO'
+  const isOvertime = sheetType === 'HORAS EXTRAS'
   const hasBlockingRowErrors = rowErrors.length > 0 && !isCadastro
-  const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || (importFinished && !payrollDeletedSuccessfully) || hasBlockingRowErrors
+  const hideImportButton = sheetHeaderError.length > 0 || sheetData.length === 0 || (importFinished && !payrollDeletedSuccessfully) || hasBlockingRowErrors || payrollConflictRef !== null || overtimeConflictRef !== null
   
   useEffect(() => {
     setCurrentPage(1) // Reset page when search query changes
@@ -304,6 +408,17 @@ const TableLoad: React.FC<TableLoadProps> = ({
     }
   }, [dispatch])
 
+  const getEmployeeRegistrationsCached = React.useCallback(async () => {
+    if (employeeRegsCache.current) {
+      return { ok: true, registrations: employeeRegsCache.current } as const
+    }
+    const res = await fetchEmployeeRegistrations(supabaseUrl, supabaseKey)
+    if (res.ok) {
+      employeeRegsCache.current = res.registrations
+    }
+    return res
+  }, [supabaseKey, supabaseUrl])
+
   const fetchAndUpdateHistory = React.useCallback(async () => {
     setIsHistoryLoading(true)
     setHistoryError(null)
@@ -322,6 +437,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
   useEffect(() => {
     fetchAndUpdateHistory()
+    employeeRegsCache.current = null // limpa cache ao montar para evitar dados stale entre sessões
   }, [fetchAndUpdateHistory])
 
   useEffect(() => {
@@ -335,7 +451,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
   // Effect for showing toast notifications
   useEffect(() => {
     // Avoid showing toasts when the modal is open, as it has its own feedback
-    if (payrollConflictRef) return
+    if (payrollConflictRef || overtimeConflictRef) return
 
     if (status === 'done') {
       if (importFinished) {
@@ -380,7 +496,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
       dispatchHeaderError(headerValidation.missingFields)
       return { ok: false }
     }
-
     const rowErrors: RowError[] = []
     jsonData.forEach((row, index) => {
       const validation = validateEmployeeRow(row)
@@ -437,7 +552,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
     // 1. Validate Employee Registrations
     const regNumbers = extractRegistrationNumbers(jsonData)
-    const employeeRegsResult = await fetchEmployeeRegistrations(supabaseUrl, supabaseKey)
+    const employeeRegsResult = await getEmployeeRegistrationsCached()
     if (!employeeRegsResult.ok) {
       dispatch({ type: 'IMPORT_FAILURE', payload: { messages: ['XxX Erro ao validar colaboradores.'] } })
       return { ok: false }
@@ -460,7 +575,13 @@ const TableLoad: React.FC<TableLoadProps> = ({
     }
     if (payrollCheck.exists) {
       pushMessage(`:) Pagamento ref. ${refMonth} ja consta em payroll.`)
-      dispatch({ type: 'SET_PAYROLL_CONFLICT', payload: { ref: refMonth, date: String(paymentValue) } })
+      // Use ISO garantido para o delete
+      const iso = formatDate(paymentValue) || String(paymentValue)
+      const dt = new Date(iso)
+      const monthIso = Number.isNaN(dt.getTime())
+        ? iso
+        : `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-01`
+      dispatch({ type: 'SET_PAYROLL_CONFLICT', payload: { ref: refMonth, date: monthIso } })
       // Do not return `ok: false`. The process is paused, pending user action in the modal.
       return { ok: true, paused: true } // Return a specific state to prevent further processing
     }
@@ -488,6 +609,102 @@ const TableLoad: React.FC<TableLoadProps> = ({
     return { ok: true }
   }, [dispatch, supabaseUrl, supabaseKey])
 
+  const validateOvertimeSheet = React.useCallback(async (jsonData: SheetData, cols: string[], pushMessage: (msg: string) => void) => {
+    const normalizeHeader = (h: string) =>
+      h
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .replace(/[^\p{L}\p{N}]/gu, '') // remove tudo que nao for letra/digito (inclui % e espaços/nbsp)
+        .toLowerCase()
+
+    const normalizedCols = cols.map((c) => normalizeHeader(c))
+    const hasData = normalizedCols.some((c) => c === 'data')
+    const hasCadastro = normalizedCols.some((c) => c === 'cadastro')
+    const hasNome = normalizedCols.some((c) => c === 'nome')
+    // Aceita qualquer variante que contenha o número da hora, mesmo que "hrs"/"hr" não venham.
+    const hasHrs100 = normalizedCols.some((c) => c.includes('100'))
+    const hasHrs60 = normalizedCols.some((c) => c.includes('60'))
+
+    const missingOvertime: string[] = []
+    if (!hasData) missingOvertime.push('Data')
+    if (!hasCadastro) missingOvertime.push('Cadastro')
+    if (!hasNome) missingOvertime.push('Nome')
+    if (!hasHrs100) missingOvertime.push('Hrs 100')
+    if (!hasHrs60) missingOvertime.push('Hrs 60')
+
+    if (missingOvertime.length > 0) {
+      dispatchHeaderError(missingOvertime)
+      return { ok: false }
+    }
+    pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
+
+    // Validar se as matrículas existem
+    const regNumbers = extractRegistrationNumbers(jsonData)
+    const employeeRegsResult = await getEmployeeRegistrationsCached()
+    if (!employeeRegsResult.ok) {
+      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: ['XxX Erro ao validar colaboradores.'] } })
+      return { ok: false }
+    }
+    const { registrations } = employeeRegsResult
+    const missingRegs = regNumbers.filter((r) => !registrations.has(r))
+    if (missingRegs.length > 0) {
+      dispatch({ type: 'VALIDATION_ERROR', payload: { messages: [`XxX Colaboradores nao encontrado: (${missingRegs.join(', ')})`] } })
+      return { ok: false }
+    }
+
+    // Checa se ja existe horas extras para as datas informadas (usa data completa dd/mm/aaaa)
+    const dateKey = Object.keys(jsonData[0]).find((k) => k.toLowerCase() === 'data') || 'Data'
+    const uniqueDates = new Set<string>()
+    jsonData.forEach((row) => {
+      const iso = formatDate(row[dateKey])
+      if (iso) uniqueDates.add(iso)
+    })
+    const firstIso = Array.from(uniqueDates)[0] || ''
+
+    const checkBatch = await checkOvertimeDatesExist(uniqueDates, supabaseUrl, supabaseKey)
+    if (!checkBatch.ok) {
+      const detail = checkBatch.error ? ` Detalhe: ${checkBatch.error}` : ''
+      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [`XxX Erro ao verificar horas extras. ${detail}`] } })
+      return { ok: false }
+    }
+    if (checkBatch.exists) {
+      const refDate = formatIsoDateDisplay(firstIso || (checkBatch.dates && checkBatch.dates[0]) || '')
+      const detailMsg = refDate ? ` ${refDate}` : ''
+      dispatch({ type: 'SET_OVERTIME_CONFLICT', payload: { ref: detailMsg.trim() || '-', date: firstIso || (checkBatch.dates?.[0] || '') } })
+      return { ok: true, paused: true }
+    }
+
+    const overtimeOrder = ['Data', 'Cadastro', 'Nome', 'Hrs 100', 'Hrs 60']
+    const ordered = overtimeOrder.filter((c) => cols.includes(c))
+    const remaining = cols.filter((c) => !ordered.includes(c))
+
+    const normalized = jsonData.map((row) => {
+      const cadastroKey = Object.keys(row).find((k) => k.toLowerCase() === 'cadastro')
+      const dataKey = Object.keys(row).find((k) => k.toLowerCase() === 'data')
+      const hours100Key = Object.keys(row).find((k) => k.toLowerCase().includes('100'))
+      const hours60Key = Object.keys(row).find((k) => k.toLowerCase().includes('60'))
+
+      const cadastroNum = cadastroKey ? Number(String(row[cadastroKey]).replace(/\D/g, '')) : row['Cadastro']
+      const dataIso = formatDate(row[dataKey || 'Data'])
+      const hours100Preview = formatTimePreview(hours100Key ? row[hours100Key] : row['Hrs 100%'])
+      const hours60Preview = formatTimePreview(hours60Key ? row[hours60Key] : row['Hrs 60%'])
+
+      return {
+        ...row,
+        Cadastro: cadastroNum,
+        Data: dataIso || row[dataKey || 'Data'],
+        'Hrs 100': hours100Preview,
+        'Hrs 60': hours60Preview,
+      }
+    })
+
+    dispatch({
+      type: 'FILE_READ_SUCCESS',
+      payload: { data: normalized, columns: [...ordered, ...remaining], messages: [], rowErrors: [] },
+    })
+    return { ok: true }
+  }, [dispatch, supabaseUrl, supabaseKey])
+
   const readExcelFile = (file: File) => {
     if (!isSupportedSheet) {
       pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
@@ -500,23 +717,34 @@ const TableLoad: React.FC<TableLoadProps> = ({
         const data = e.target?.result as ArrayBuffer
         const workbook = XLSX.read(data, { type: 'array' })
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet) as SheetData
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet, {
+          defval: '', // garante que colunas vazias apareçam no objeto (cabecalho)
+          raw: true,
+          blankrows: false,
+        }) as SheetData
+
+        const headerRows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '', blankrows: false }) as any[][]
+        const headers = Array.isArray(headerRows) && headerRows.length > 0
+          ? (headerRows[0] || []).map((h: any) => String(h ?? '').trim())
+          : Object.keys(jsonData[0] || {})
 
         if (jsonData.length === 0) {
           pushMessage('XxX Arquivo vazio.')
           return
         }
 
-        const cols = Object.keys(jsonData[0] || {})
+        const cols = headers
         let validationResult: { ok: boolean; paused?: boolean }
 
         if (isCadastro) {
           validationResult = validateCadastroSheet(jsonData, cols, pushMessage)
         } else if (isFolha) {
           validationResult = await validateFolhaSheet(jsonData, cols, pushMessage)
+        } else if (isOvertime) {
+          validationResult = await validateOvertimeSheet(jsonData, cols, pushMessage)
         } else {
           pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
-          dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: jsonData, columns: Object.keys(jsonData[0] || {}), messages: [] } })
+          dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: jsonData, columns: headers, messages: [] } })
           validationResult = { ok: true }
         }
 
@@ -536,6 +764,14 @@ const TableLoad: React.FC<TableLoadProps> = ({
     if (!sheetType || !selectedFile || !isSupportedSheet) {
       pushMessage('Escolha o tipo de planilha antes de importar.')
       dispatch({ type: 'SET_STATUS', payload: 'idle' })
+      return
+    }
+    if (payrollConflictRef && isFolha) {
+      pushMessage('Resolva o conflito da folha antes de importar.')
+      return
+    }
+    if (overtimeConflictRef && isOvertime) {
+      pushMessage('Resolva o conflito de horas extras antes de importar.')
       return
     }
 
@@ -609,6 +845,30 @@ const TableLoad: React.FC<TableLoadProps> = ({
           supabaseUrl,
           supabaseKey
         )
+      } else if (isOvertime) {
+        if (overtimeConflictRef) {
+          pushMessage('XxX Resolva o conflito de horas extras antes de importar.')
+          return
+        }
+        const overtimeResult = await insertOvertime(sheetData, userName, supabaseUrl, supabaseKey)
+        if (!overtimeResult.ok) {
+          const overtimeError = overtimeResult.error ? `XxX Erro ao gravar horas extras: ${overtimeResult.error}` : 'XxX Erro ao gravar horas extras.'
+          dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [overtimeError] } })
+          return
+        }
+        finalMessages.push(`OoO Horas extras: ${overtimeResult.inserted} linha(s) inseridas.`)
+        const refDateLog = getRefFullDate(sheetData[0]?.['Data'])
+        await insertHistory(
+          {
+            table: refDateLog ? `overtime Ref. ${refDateLog}` : 'overtime',
+            actions: 'Inclusao',
+            file: selectedFile?.name || '-',
+            user: userName || '-',
+            type: 'Importado',
+          },
+          supabaseUrl,
+          supabaseKey
+        )
       }
 
       finalMessages.push('OoO Carga da tabela concluida com sucesso.')
@@ -624,6 +884,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
   const resetForm = () => {
     dispatch({ type: 'RESET_FORM' })
     resetFileInput()
+    employeeRegsCache.current = null
   }
 
   const getStatusColor = () => {
@@ -695,6 +956,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
           getStatusColor={getStatusColor}
           cadastroHeaders={REQUIRED_FIELDS}
           folhaHeaders={requiredFolhaHeaders}
+          overtimeHeaders={requiredOvertimeHeaders}
         />
         <HistoryTable
           history={paginatedHistory}
@@ -720,6 +982,15 @@ const TableLoad: React.FC<TableLoadProps> = ({
         rowErrors={rowErrors} />
 
       <PayrollConflictModal
+        state={state}
+        dispatch={dispatch}
+        pushMessage={pushMessage}
+        onHistoryUpdate={fetchAndUpdateHistory}
+        userName={userName}
+        supabaseUrl={supabaseUrl}
+        supabaseKey={supabaseKey}
+      />
+      <OvertimeConflictModal
         state={state}
         dispatch={dispatch}
         pushMessage={pushMessage}

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { FileSpreadsheet, AlertTriangle } from 'lucide-react'
+import { FileSpreadsheet, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react'
 import type { SheetData, RowError } from '../views/Table_load'
 
 const formatDateCell = (value: any): string => {
@@ -52,6 +52,7 @@ interface DataPreviewProps {
 
 const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha: _isFolha, rowErrors }) => {
   const [filterText, setFilterText] = useState('')
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null)
   const errorMap = useMemo(() => {
     const map = new Map<number, Map<string, string>>()
     rowErrors.forEach(error => {
@@ -66,7 +67,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
   }, [rowErrors])
 
   const dateColumns = useMemo(
-    () => new Set(['nascimento', 'admissao', 'data afastamento', 'pagamento']),
+    () => new Set(['nascimento', 'admissao', 'data afastamento', 'pagamento', 'data']),
     []
   )
 
@@ -79,6 +80,38 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
       return cadastro.includes(needle) || nome.includes(needle)
     })
   }, [data, filterText])
+
+  const sortedData = useMemo(() => {
+    if (!sortConfig) return filteredData
+    const { key, direction } = sortConfig
+    return [...filteredData].sort((a, b) => {
+      const av = a[key]
+      const bv = b[key]
+
+      const parseVal = (v: any) => {
+        if (v === null || v === undefined) return ''
+        const num = Number(v)
+        if (!Number.isNaN(num)) return num
+        return String(v).toLowerCase()
+      }
+
+      const va = parseVal(av)
+      const vb = parseVal(bv)
+
+      if (va < vb) return direction === 'asc' ? -1 : 1
+      if (va > vb) return direction === 'asc' ? 1 : -1
+      return 0
+    })
+  }, [filteredData, sortConfig])
+
+  const handleSort = (col: string) => {
+    setSortConfig((prev) => {
+      if (prev?.key === col) {
+        return { key: col, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+      }
+      return { key: col, direction: 'asc' }
+    })
+  }
 
   if (!show || data.length === 0) {
     return null
@@ -109,15 +142,26 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
           <thead className="bg-blue-900 border-b border-blue-700 sticky top-0 z-30 text-white shadow-sm shadow-black/30">
             <tr>
               <th className="px-2 py-2 font-semibold text-white/90 uppercase tracking-wide text-center w-8"></th>
-              {columns.map((col) => (
-                <th key={col} className="px-3 py-2 font-semibold text-white/90 uppercase tracking-wide text-center">
-                  {col}
-                </th>
-              ))}
+              {columns.map((col) => {
+                const isSorted = sortConfig?.key === col
+                const direction = sortConfig?.direction
+                return (
+                  <th key={col} className="px-3 py-2 font-semibold text-white/90 uppercase tracking-wide text-center">
+                    <button
+                      type="button"
+                      onClick={() => handleSort(col)}
+                      className="w-full flex items-center justify-center gap-1 hover:text-emerald-200 transition-colors"
+                    >
+                      <span>{col}</span>
+                      {isSorted && (direction === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
+                    </button>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
-            {filteredData.map((row: Record<string, any>, rowIndex: number) => {
+            {sortedData.map((row: Record<string, any>, rowIndex: number) => {
               const errorsForThisRow = errorMap.get(rowIndex + 2) // rowIndex is 0-based, error.rowIndex is 1-based from sheet
               const hasError = !!errorsForThisRow
 

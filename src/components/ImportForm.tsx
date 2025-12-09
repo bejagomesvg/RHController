@@ -25,6 +25,7 @@ interface ImportFormProps {
   getStatusColor: () => string
   cadastroHeaders: string[]
   folhaHeaders: string[]
+  overtimeHeaders: string[]
 }
 
 const ImportForm: React.FC<ImportFormProps> = ({
@@ -40,6 +41,7 @@ const ImportForm: React.FC<ImportFormProps> = ({
   getStatusColor,
   cadastroHeaders,
   folhaHeaders,
+  overtimeHeaders,
 }) => {
   const { sheetType, selectedFile, status, messages, showPreview, progress, sheetData } = state
   const hasPreviewData = sheetData.length > 0
@@ -105,11 +107,15 @@ const ImportForm: React.FC<ImportFormProps> = ({
                 sheetType={sheetType}
                 cadastroHeaders={cadastroHeaders}
                 folhaHeaders={folhaHeaders}
+                overtimeHeaders={overtimeHeaders}
                 showLabel={false}
               />
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  if (fileInputRef.current) fileInputRef.current.value = ''
+                  fileInputRef.current?.click()
+                }}
                 className="px-3 py-2 rounded-md bg-transparent border border-emerald-500/60 text-emerald-300 font-semibold hover:bg-emerald-500/20 hover:border-emerald-400/80 transition-all flex items-center gap-2 whitespace-nowrap"
                 title="Selecionar arquivo para upload"
               >
