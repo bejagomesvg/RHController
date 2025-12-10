@@ -12,6 +12,7 @@ export type ModuleKey =
   | 'security'
   | 'database'
   | 'table_load'
+  | 'operations'
 
 export type UserRegistration = {
   id: number
@@ -34,6 +35,7 @@ export type UserRegistration = {
   security?: string | boolean
   database?: string | boolean
   table_load?: string | boolean
+  operations?: string | boolean
 }
 
 export type UserRow = {

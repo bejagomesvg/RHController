@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS user_registration (
     database VARCHAR(100),                      -- Estrutura organizada para armazenar e gerenciar informações digitais.
     table_load VARCHAR(100),                    -- Processo de inserir ou atualizar dados em tabelas de um banco de dados.
     allowed_sector VARCHAR(100),               	-- Setor permitido
+    operations VARCHAR(100),                    -- Operações realizados pelos setores de RH, Producao e Controle de Horas Extras
     access_data TIMESTAMPTZ                    	-- Último acesso
 );
 
@@ -48,6 +49,7 @@ INSERT INTO user_registration (
     database,
     table_load,
     allowed_sector,
+    Operations,
     access_data
 ) VALUES
 (
