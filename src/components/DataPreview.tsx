@@ -53,6 +53,7 @@ interface DataPreviewProps {
 const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha: _isFolha, rowErrors }) => {
   const [filterText, setFilterText] = useState('')
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null)
+  const showErrorColumn = rowErrors.length > 0
   const errorMap = useMemo(() => {
     const map = new Map<number, Map<string, string>>()
     rowErrors.forEach(error => {
@@ -141,7 +142,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
         <table className="w-full text-[11px] text-white/80 border-collapse">
           <thead className="bg-blue-900 border-b border-blue-700 sticky top-0 z-30 text-white shadow-sm shadow-black/30">
             <tr>
-              <th className="px-2 py-2 font-semibold text-white/90 uppercase tracking-wide text-center w-8"></th>
+              {showErrorColumn && <th className="px-2 py-2 font-semibold text-white/90 uppercase tracking-wide text-center w-8"></th>}
               {columns.map((col) => {
                 const isSorted = sortConfig?.key === col
                 const direction = sortConfig?.direction
@@ -167,9 +168,11 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
 
               return (
                 <tr key={rowIndex} className={`${rowIndex % 2 === 0 ? 'bg-white/5' : 'bg-transparent'} ${hasError ? 'bg-rose-500/10' : ''}`}>
-                  <td className="px-2 py-2 text-center">
-                    {hasError && <AlertTriangle className="w-4 h-4 text-amber-400 mx-auto" />}
-                  </td>
+                  {showErrorColumn && (
+                    <td className="px-2 py-2 text-center">
+                      {hasError && <AlertTriangle className="w-4 h-4 text-amber-400 mx-auto" />}
+                    </td>
+                  )}
                   {columns.map((col) => {
                     const colKey = col.toLowerCase()
                     const cellError = errorsForThisRow?.get(colKey)

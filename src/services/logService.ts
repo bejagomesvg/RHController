@@ -74,14 +74,8 @@ export const insertHistory = async (
     return false
   }
   try {
-    const nextId = entry.id ?? (await getNextLogId(supabaseUrl, supabaseKey))
-    if (nextId === null) {
-      console.error('Nao foi possivel gerar id para log_table_load')
-      return false
-    }
     const url = new URL(`${supabaseUrl}/rest/v1/log_table_load`)
     const payload = {
-      id: nextId,
       table_registration: entry.table,
       actions: entry.actions,
       date_registration: new Date().toISOString(),

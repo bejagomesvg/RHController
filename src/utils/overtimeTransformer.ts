@@ -58,7 +58,35 @@ const toHHMM = (v: any) => {
   return min > 0 ? minutosParaHHMM(min) : ''
 }
 
-const getDateFromJ5 = (matriz: any[][]): string => {
+const formatJ5Date = (value: any): string => {
+  if (value === null || value === undefined) return ''
+
+  if (typeof value === 'number' && Number.isFinite(value) && value > 1) {
+    const excelEpoch = new Date(1899, 11, 30)
+    const d = new Date(excelEpoch.getTime() + value * 86400000)
+    if (!Number.isNaN(d.getTime())) {
+      const dd = String(d.getUTCDate()).padStart(2, '0')
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+      const yyyy = d.getUTCFullYear()
+      return `${dd}/${mm}/${yyyy}`
+    }
+  }
+
+  const s = String(value).trim()
+  if (!s) return ''
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-')
+    return `${d}/${m}/${y}`
+  }
+  return s
+}
+
+const getDateFromJ5 = (matriz: any[][], firstSheet?: XLSX.Sheet): string => {
+  if (firstSheet && firstSheet['J5'] && typeof firstSheet['J5'] === 'object' && 'v' in firstSheet['J5']) {
+    const cell: any = firstSheet['J5']
+    return cell?.v ?? ''
+  }
   const val = matriz?.[4]?.[9] // linha 5, coluna J (base 0)
   return val === null || val === undefined ? '' : String(val).trim()
 }
@@ -92,7 +120,7 @@ export const transformOvertimeApuracao = (buffer: ArrayBuffer): OvertimeTransfor
   const workbook = XLSX.read(buffer, { type: 'array' })
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
   const matriz = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: true, defval: null, blankrows: false }) as any[][]
-  const dateFromJ5 = getDateFromJ5(matriz)
+  const dateFromJ5 = formatJ5Date(getDateFromJ5(matriz, firstSheet))
 
   // Caso o arquivo já esteja no layout final (Data, Cadastro, Nome, 303...512), apenas normaliza para HH:MM
   if (matriz.length > 0 && hasStructuredHeaders(matriz[0])) {
@@ -123,7 +151,7 @@ export const transformOvertimeApuracao = (buffer: ArrayBuffer): OvertimeTransfor
   let matriculaAtual: string | null = null
   let nomeAtual: string | null = null
 
-  const periodo = dateFromJ5 || extrairPeriodo(matriz)
+  const periodo = dateFromJ5 || formatJ5Date(extrairPeriodo(matriz))
 
   const detectarMatriculaNome = (row: any[]) => {
     for (let i = 0; i < row.length; i += 1) {
