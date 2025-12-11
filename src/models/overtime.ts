@@ -2,8 +2,12 @@ export interface OvertimePayload {
   registration: number | null
   name: string | null
   date_: string | null
-  hours60: string | null
-  hours100: string | null
+  hrs303: string | null
+  hrs304: string | null
+  hrs505: string | null
+  hrs506: string | null
+  hrs511: string | null
+  hrs512: string | null
   type_registration: string
   user_registration: string | null
   date_registration: string

@@ -324,8 +324,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
     key: string
     direction: 'ascending' | 'descending'
   } | null>({ key: 'date', direction: 'descending' })
-  const [overtimeTransformResult, setOvertimeTransformResult] = useState<OvertimeTransformResult | null>(null)
-  const [showScriptsPreview, setShowScriptsPreview] = useState(false)
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
@@ -410,16 +408,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
     }
   }, [dispatch])
 
-  const handleToggleScriptsPreview = () => {
-    const isAdmin = (userRole || '').toUpperCase() === 'ADMINISTRADOR'
-    if (!isAdmin || sheetType !== 'HORAS EXTRAS') return
-    if (!overtimeTransformResult || overtimeTransformResult.rows.length === 0) {
-      pushMessage('XxX Nenhum dado transformado para exibir scripts.')
-      return
-    }
-    setShowScriptsPreview((prev) => !prev)
-  }
-
   const getEmployeeRegistrationsCached = React.useCallback(async () => {
     if (employeeRegsCache.current) {
       return { ok: true, registrations: employeeRegsCache.current } as const
@@ -503,10 +491,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
       return
     }
     dispatch({ type: 'SELECT_FILE', payload: file })
-    if (!file) {
-      setOvertimeTransformResult(null)
-      setShowScriptsPreview(false)
-      return
+    if (!file) {      return
     }
     if (file) {
       pushMessage(`Arquivo selecionado: ${file.name}`)
@@ -527,23 +512,22 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
           const transformed = transformOvertimeApuracao(buffer)
           overtimeTransformed = transformed
-          setOvertimeTransformResult(transformed)
-          setShowScriptsPreview(false)
           if (transformed.rows.length === 0) {
             pushMessage('XxX Transformacao retornou 0 linhas.')
           } else {
-            pushMessage(`OoO Transformacao pronta (${transformed.rows.length} linha(s)).`)
+            const periodDisplay = transformed.period
+              ? (/^\d{2}\/\d{2}\/\d{4}$/.test(transformed.period.trim())
+                ? transformed.period.trim()
+                : getRefFullDate(transformed.period))
+              : ''
+            const periodSuffix = periodDisplay ? ` Data: ${periodDisplay}` : ''
+            pushMessage(`OoO Transformacao pronta (${transformed.rows.length} linha(s)).${periodSuffix}`)
           }
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : 'Falha ao transformar horas extras.'
-          setOvertimeTransformResult(null)
-          setShowScriptsPreview(false)
           pushMessage(`XxX Erro ao transformar horas extras: ${errMsg}`)
         }
-      } else {
-        setOvertimeTransformResult(null)
-        setShowScriptsPreview(false)
-      }
+      } else { }
 
       readExcelFile(file, overtimeTransformed ? { rows: overtimeTransformed.rows } : undefined)
     }
@@ -1083,10 +1067,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
           cadastroHeaders={REQUIRED_FIELDS}
           folhaHeaders={requiredFolhaHeaders}
           overtimeHeaders={requiredOvertimeHeaders}
-          userRole={userRole}
-          onToggleScriptsPreview={handleToggleScriptsPreview}
-          scriptsEnabled={isOvertime && (userRole || '').toUpperCase() === 'ADMINISTRADOR' && (overtimeTransformResult?.rows?.length || 0) > 0}
-          scriptsActive={showScriptsPreview}
         />
         <HistoryTable
           history={paginatedHistory}
@@ -1110,18 +1090,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
         columns={columns}
         isFolha={sheetType === 'FOLHA PGTO'}
         rowErrors={rowErrors} />
-
-      {showScriptsPreview && isOvertime && overtimeTransformResult && overtimeTransformResult.rows.length > 0 && (
-        <div className="mt-4">
-          <DataPreview
-            show
-            data={overtimeTransformResult.rows as SheetData}
-            columns={['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512']}
-            isFolha={false}
-            rowErrors={[]}
-          />
-        </div>
-      )}
 
       <PayrollConflictModal
         state={state}

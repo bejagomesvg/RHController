@@ -26,10 +26,6 @@ interface ImportFormProps {
   cadastroHeaders: string[]
   folhaHeaders: string[]
   overtimeHeaders: string[]
-  userRole?: string
-  onToggleScriptsPreview?: () => void
-  scriptsEnabled?: boolean
-  scriptsActive?: boolean
 }
 
 const ImportForm: React.FC<ImportFormProps> = ({
@@ -46,15 +42,10 @@ const ImportForm: React.FC<ImportFormProps> = ({
   cadastroHeaders,
   folhaHeaders,
   overtimeHeaders,
-  userRole,
-  onToggleScriptsPreview,
-  scriptsEnabled = false,
-  scriptsActive = false,
 }) => {
   const { sheetType, selectedFile, status, messages, showPreview, progress, sheetData } = state
   const hasPreviewData = sheetData.length > 0
   const [isPreviewLoading, setIsPreviewLoading] = React.useState(false)
-  const isAdmin = (userRole || '').toUpperCase() === 'ADMINISTRADOR'
 
   const handleTogglePreview = () => {
     if (!hasPreviewData || isPreviewLoading) return
@@ -176,22 +167,6 @@ const ImportForm: React.FC<ImportFormProps> = ({
                     {isPreviewLoading ? 'Carregando tabela...' : 'Preview'}
                   </span>
                 </button>
-                {isAdmin && sheetType === 'HORAS EXTRAS' && (
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 text-white/80 text-xs cursor-pointer select-none hover:text-emerald-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Scripts administrativos"
-                    onClick={onToggleScriptsPreview}
-                    disabled={!scriptsEnabled}
-                  >
-                    {scriptsActive ? (
-                      <CircleCheckBig className="w-4 h-4 text-emerald-300" />
-                    ) : (
-                      <Circle className="w-4 h-4 text-white" />
-                    )}
-                    <span className={scriptsActive ? 'text-emerald-200' : 'text-white/80'}>Scripts</span>
-                  </button>
-                )}
               </div>
             )}
           </div>

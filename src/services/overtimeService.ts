@@ -12,40 +12,43 @@ const parseNumber = (val: any): number | null => {
   return Number.isNaN(num) ? null : num
 }
 
-const parseTimeToSeconds = (val: any): number | null => {
+const parseTimeToInterval = (val: any): string | null => {
   if (val === null || val === undefined || val === '') return null
 
-  if (typeof val === 'number') {
-    if (!Number.isFinite(val)) return null
-    return Math.round(val * 24 * 60 * 60)
+  const toSeconds = (): number | null => {
+    if (typeof val === 'number') {
+      if (!Number.isFinite(val)) return null
+      return Math.round(val * 24 * 60 * 60)
+    }
+
+    const raw = String(val).trim()
+    if (!raw) return null
+
+    const colonMatch = raw.match(/^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$/)
+    if (colonMatch) {
+      const [, h, m, s] = colonMatch
+      const hours = Number(h)
+      const minutes = Number(m)
+      const seconds = s ? Number(s) : 0
+      if ([hours, minutes, seconds].some((n) => Number.isNaN(n))) return null
+      return hours * 3600 + minutes * 60 + seconds
+    }
+
+    const decimal = Number(raw.replace(',', '.'))
+    if (!Number.isNaN(decimal)) {
+      return Math.round(decimal * 3600)
+    }
+
+    return null
   }
 
-  const raw = String(val).trim()
-  if (!raw) return null
+  const seconds = toSeconds()
+  if (seconds === null) return null
 
-  const colonMatch = raw.match(/^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$/)
-  if (colonMatch) {
-    const [, h, m, s] = colonMatch
-    const hours = Number(h)
-    const minutes = Number(m)
-    const seconds = s ? Number(s) : 0
-    if ([hours, minutes, seconds].some((n) => Number.isNaN(n))) return null
-    return hours * 3600 + minutes * 60 + seconds
-  }
-
-  const decimal = Number(raw.replace(',', '.'))
-  if (!Number.isNaN(decimal)) {
-    return Math.round(decimal * 3600)
-  }
-
-  return null
-}
-
-const formatTimeFromSeconds = (totalSeconds: number): string => {
-  const seconds = Math.max(0, Math.round(totalSeconds))
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = seconds % 60
+  const total = Math.max(0, seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const secs = total % 60
   const pad2 = (n: number) => String(n).padStart(2, '0')
   return `${hours}:${pad2(minutes)}:${pad2(secs)}`
 }
@@ -192,24 +195,16 @@ export const insertOvertime = async (
     const dateKey = Object.keys(row).find((k) => k.toLowerCase() === 'data') || 'Data'
     const nameKey = Object.keys(row).find((k) => k.toLowerCase() === 'nome') || 'Nome'
 
-    const total100Seconds = ['303', '304', '511', '512'].reduce((acc, code) => {
-      const key = Object.keys(row).find((k) => k.toLowerCase() === code.toLowerCase()) || code
-      const seconds = parseTimeToSeconds(row[key])
-      return acc + (seconds ?? 0)
-    }, 0)
-
-    const total60Seconds = ['505', '506'].reduce((acc, code) => {
-      const key = Object.keys(row).find((k) => k.toLowerCase() === code.toLowerCase()) || code
-      const seconds = parseTimeToSeconds(row[key])
-      return acc + (seconds ?? 0)
-    }, 0)
-
     return {
       registration: parseNumber(row[cadastroKey]),
       name: row[nameKey] ? String(row[nameKey]).trim() : row['name'] ? String(row['name']).trim() : null,
       date_: parseDateIso(row[dateKey]),
-      hours100: total100Seconds > 0 ? formatTimeFromSeconds(total100Seconds) : null,
-      hours60: total60Seconds > 0 ? formatTimeFromSeconds(total60Seconds) : null,
+      hrs303: parseTimeToInterval(row['303']),
+      hrs304: parseTimeToInterval(row['304']),
+      hrs505: parseTimeToInterval(row['505']),
+      hrs506: parseTimeToInterval(row['506']),
+      hrs511: parseTimeToInterval(row['511']),
+      hrs512: parseTimeToInterval(row['512']),
       type_registration: 'Importado',
       user_registration: userName || null,
       date_registration: new Date().toISOString(),
