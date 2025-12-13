@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react'
-import { FileSpreadsheet, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react'
+import { FileSpreadsheet, AlertTriangle, ArrowUp, ArrowDown, LoaderCircle } from 'lucide-react'
 import type { SheetData, RowError } from '../views/Table_load'
 
 const formatDateCell = (value: any): string => {
@@ -48,10 +48,18 @@ interface DataPreviewProps {
   columns: string[]
   isFolha: boolean
   rowErrors: RowError[]
+  filterText?: string
+  onFilterChange?: (value: string) => void
+  isLoading?: boolean
+  hideHeader?: boolean
+  showFilterInput?: boolean
 }
 
-const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha: _isFolha, rowErrors }) => {
-  const [filterText, setFilterText] = useState('')
+const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha: _isFolha, rowErrors, filterText: externalFilter, onFilterChange, isLoading, hideHeader, showFilterInput = true }) => {
+  const [localFilter, setLocalFilter] = useState('')
+  const isControlled = onFilterChange !== undefined
+  const filterText = isControlled ? (externalFilter ?? '') : localFilter
+  const setFilterText = isControlled ? onFilterChange : setLocalFilter
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null)
   const showErrorColumn = rowErrors.length > 0
   const errorMap = useMemo(() => {
@@ -73,6 +81,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
   )
 
   const filteredData = useMemo(() => {
+    if (isControlled) return data
     if (!filterText.trim()) return data
     const needle = filterText.trim().toLowerCase()
     return data.filter((row) => {
@@ -80,7 +89,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
       const nome = String(row['Nome'] ?? '').toLowerCase()
       return cadastro.includes(needle) || nome.includes(needle)
     })
-  }, [data, filterText])
+  }, [data, filterText, isControlled])
 
   const sortedData = useMemo(() => {
     if (!sortConfig) return filteredData
@@ -114,26 +123,39 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
     })
   }
 
-  if (!show || data.length === 0) {
+  if (!show) {
     return null
   }
 
   return (
     <div className="bg-slate-900/70 border border-white/10 rounded-xl overflow-hidden w-full">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
-          <p className="text-white font-semibold">Dados carregados ({data.length} linha(s))</p>
-        </div>
-        <div className="ml-auto w-full sm:w-64">
-          <input
-            type="text"
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            placeholder="Filtrar por cadastro ou nome"
-            className="w-full bg-white/5 text-white text-xs border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400"
-          />
-        </div>
+        {!hideHeader && (
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
+            <p className="text-white font-semibold">
+              {isLoading ? 'Carregando...' : `Dados carregados (${data.length} linha(s))`}
+            </p>
+            {isLoading && <LoaderCircle className="w-4 h-4 text-emerald-300 animate-spin" />}
+          </div>
+        )}
+        {hideHeader && isLoading && (
+          <div className="flex items-center gap-2">
+            <LoaderCircle className="w-4 h-4 text-emerald-300 animate-spin" />
+            <p className="text-white/70 text-sm">Carregando...</p>
+          </div>
+        )}
+        {showFilterInput && (
+          <div className="ml-auto w-full sm:w-64">
+            <input
+              type="text"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              placeholder="Filtrar por cadastro ou nome"
+              className="w-full bg-white/5 text-white text-xs border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400"
+            />
+          </div>
+        )}
       </div>
       <div
         className="overflow-x-auto overflow-y-auto max-h-[420px] min-h-[220px] custom-scroll preview-scroll"
@@ -162,6 +184,13 @@ const DataPreview: React.FC<DataPreviewProps> = ({ show, data, columns, isFolha:
             </tr>
           </thead>
           <tbody>
+            {!isLoading && sortedData.length === 0 && (
+              <tr>
+                <td colSpan={columns.length + (showErrorColumn ? 1 : 0)} className="px-3 py-8 text-center text-white/60">
+                  Nenhum registro encontrado.
+                </td>
+              </tr>
+            )}
             {sortedData.map((row: Record<string, any>, rowIndex: number) => {
               const errorsForThisRow = errorMap.get(rowIndex + 2) // rowIndex is 0-based, error.rowIndex is 1-based from sheet
               const hasError = !!errorsForThisRow
