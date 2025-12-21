@@ -324,8 +324,9 @@ export function App(): ReactElement {
     <div className="min-h-screen flex items-center justify-center px-5 py-[15px]">
       <div className={`w-full ${cardMaxWidth} z-10`}>
         <div
-          className={`bg-slate-900/65 backdrop-blur-md border border-white/15 rounded-2xl shadow-2xl px-5 md:px-6 py-[15px] relative ring-1 ${cardRing}`}
+          className={`bg-slate-900/65 backdrop-blur-md border border-white/15 rounded-2xl shadow-2xl relative ring-1 ${cardRing}`}
         >
+          <div className="px-5 md:px-6 py-[15px]">
           <div className={`flex items-center justify-center ${isDashboard ? 'mb-0' : 'mb-6'}`}>
             <div
               className={`line-anim left h-px bg-white/35 flex-1 relative overflow-hidden ${
@@ -681,6 +682,7 @@ export function App(): ReactElement {
           )}
 
           <p className="text-center text-white/70 text-xs mt-1">&copy; rhControle - Version 2025.1</p>
+          </div>
         </div>
       </div>
     </div>

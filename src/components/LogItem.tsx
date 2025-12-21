@@ -1,5 +1,5 @@
 import React from 'react'
-import { CheckCircle, XCircle, AlertTriangle, Info } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Info, XCircle } from 'lucide-react'
 
 interface LogItemProps {
   message: string

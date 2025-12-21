@@ -80,19 +80,13 @@ export const insertEmployees = async (
 
   try {
     const payload: EmployeePayload[] = data.map((row) => mapRowToEmployee(row, userName))
-    const existingUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-    existingUrl.searchParams.set('select', 'registration')
-    const existingRes = await fetch(existingUrl.toString(), {
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
-    })
-    if (!existingRes.ok) {
-      const errTxt = await existingRes.text()
-      console.error('Erro ao buscar registros existentes', errTxt)
-      return { ok: false, newCount: 0, updatedCount: 0, error: errTxt }
+    const existingResult = await fetchEmployeeRegistrations(supabaseUrl, supabaseKey)
+    if (!existingResult.ok) {
+      const message = 'Erro ao buscar registros existentes'
+      console.error(message)
+      return { ok: false, newCount: 0, updatedCount: 0, error: message }
     }
-
-    const existingData = (await existingRes.json()) as Array<{ registration: number }>
-    const existingSet = new Set(existingData.map((r) => r.registration))
+    const existingSet = existingResult.registrations
 
     const filtered = payload.filter((p) => p.registration !== null)
     const toUpdate = filtered.filter((p) => p.registration !== null && existingSet.has(p.registration))
@@ -104,49 +98,33 @@ export const insertEmployees = async (
       return { ok: false, newCount: 0, updatedCount: 0, error: message }
     }
 
-    for (const entry of toUpdate) {
-      const updateUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-      updateUrl.searchParams.set('registration', `eq.${entry.registration}`)
-      const { registration, ...rest } = entry
-      const updatePayload = {
-        ...rest, // nunca tenta alterar a chave de registro (constraint unique)
-        user_update: userName || null,
-        date_update: new Date().toISOString(),
-      }
-      const res = await fetch(updateUrl.toString(), {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify(updatePayload),
-      })
-      if (!res.ok) {
-        const errTxt = await res.text()
-        console.error('Erro ao atualizar employee', errTxt)
-        return { ok: false, newCount: 0, updatedCount: 0, error: errTxt }
-      }
-    }
+    const updatePayload = toUpdate.map((entry) => ({
+      ...entry,
+      user_update: userName || null,
+      date_update: new Date().toISOString(),
+    }))
 
-    if (toInsert.length > 0) {
-      const insertUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-      const resInsert = await fetch(insertUrl.toString(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify(toInsert),
-      })
-      if (!resInsert.ok) {
-        const errTxt = await resInsert.text()
-        console.error('Erro ao inserir employee', errTxt)
-        return { ok: false, newCount: 0, updatedCount: 0, error: errTxt }
-      }
+    const upsertPayload = [...toInsert, ...updatePayload].map((entry) => ({
+      ...entry,
+      user_update: entry.user_update ?? null,
+      date_update: entry.date_update ?? null,
+    }))
+    const upsertUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
+    upsertUrl.searchParams.set('on_conflict', 'registration')
+    const resUpsert = await fetch(upsertUrl.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(upsertPayload),
+    })
+    if (!resUpsert.ok) {
+      const errTxt = await resUpsert.text()
+      console.error('Erro ao inserir/atualizar employee', errTxt)
+      return { ok: false, newCount: 0, updatedCount: 0, error: errTxt }
     }
 
     return { ok: true, newCount: toInsert.length, updatedCount: toUpdate.length }

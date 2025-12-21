@@ -34,10 +34,9 @@ const DownloadTemplateButton: React.FC<DownloadTemplateButtonProps> = ({
       headers = overtimeHeaders
       fileName = 'modelo_horas_extras.xlsx'
     } else {
-      return // No template for this type
+      return
     }
 
-    // Create an empty object with headers as keys
     const templateData = [headers.reduce((acc, header) => ({ ...acc, [header]: '' }), {})]
 
     const worksheet = XLSX.utils.json_to_sheet(templateData)
