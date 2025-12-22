@@ -37,8 +37,14 @@ const ChartMini: React.FC<ChartMiniProps> = ({ series: chartSeries, formatDecima
         <span className="text-sm font-semibold">Evolução Últimos 3 Meses</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-36">
-        <polyline points={line60} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" />
-        <polyline points={line100} fill="none" stroke="#a855f7" strokeWidth="2.5" strokeLinecap="round" />
+        <g className="group">
+          <polyline points={line60} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" className="transition-all duration-300 group-hover:stroke-[3px] group-hover:opacity-80" />
+          <polyline points={line60} fill="none" stroke="transparent" strokeWidth="12" strokeLinecap="round" />
+        </g>
+        <g className="group">
+          <polyline points={line100} fill="none" stroke="#a855f7" strokeWidth="2.5" strokeLinecap="round" className="transition-all duration-300 group-hover:stroke-[3px] group-hover:opacity-80" />
+          <polyline points={line100} fill="none" stroke="transparent" strokeWidth="12" strokeLinecap="round" />
+        </g>
         {chartSeries.map((c, i) => {
           const [x60, y60] = toPoint(c.total60, i).split(',').map(Number)
           const [x100, y100] = toPoint(c.total100, i).split(',').map(Number)

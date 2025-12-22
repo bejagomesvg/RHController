@@ -211,3 +211,14 @@ body {
 .preview-scroll::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #2563eb 0%, #60a5fa 100%);
 }
+
+.chart-container .recharts-bar-rectangle path {
+  transition: transform 0.2s ease-in-out;
+  transform-origin: bottom;
+}
+
+
+.chart-container .recharts-bar-rectangle:hover path {
+  transform: scaleY(1.05);
+  filter: brightness(1.2);
+}

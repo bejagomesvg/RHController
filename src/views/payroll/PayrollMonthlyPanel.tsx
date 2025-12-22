@@ -37,6 +37,7 @@ type PayrollEventRow = {
   registration: number | string | null
   events: number | null
   volue: number | null
+  references_: number | null
   competence: string | null
 }
 
@@ -73,6 +74,28 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
     if (value === null || value === undefined) return null
     return String(value).trim()
   }
+
+  const abbreviateSector = (sector: string | null): string => {
+    if (!sector) return 'Sem setor';
+    let abbreviated = sector.toUpperCase();
+    abbreviated = abbreviated.replace('ADMINISTRATIVO', 'ADM.');
+    abbreviated = abbreviated.replace('ADMINISTRAÇÃO', 'ADM.');
+    abbreviated = abbreviated.replace('HIGIENIZAÇÃO', 'HIG.');
+    abbreviated = abbreviated.replace('INDUSTRIAL', 'IND.');
+    abbreviated = abbreviated.replace('SECUNDÁRIA', 'SEC.');
+    abbreviated = abbreviated.replace('ALMOXARIFADO', 'ALMOX.');
+    abbreviated = abbreviated.replace('EMBARQUE', 'EMB.');
+    abbreviated = abbreviated.replace('BUCHARIA', 'BUCH.');
+    abbreviated = abbreviated.replace('TÉCNICO', 'TÉC.');
+    abbreviated = abbreviated.replace('INFORMÁTICA', 'INFOR.');
+    abbreviated = abbreviated.replace('CONTROLE DE', 'C.');
+    abbreviated = abbreviated.replace('SERVIÇOS', 'SERV.');
+    abbreviated = abbreviated.replace('GERAIS', 'G.');
+    abbreviated = abbreviated.replace('DEP.PESSOAL', 'D. P.');
+    abbreviated = abbreviated.replace('PANTANEIRA', '');
+    abbreviated = abbreviated.replace('SALA DE', 'S.');
+    return abbreviated;
+  };
 
   const SectorTick = ({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) => {
     if (x === undefined || y === undefined || !payload) return null
@@ -293,7 +316,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
       try {
         const competence = `${yearFilter}-${String(monthFilter).padStart(2, '0')}-01`
         const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
-        url.searchParams.set('select', 'registration,events,volue,competence')
+        url.searchParams.set('select', 'registration,events,volue,references_,competence')
         url.searchParams.set('competence', `eq.${competence}`)
         const registrations = Array.from(indicatorRegistrations)
         if (registrations.length > 0 && registrations.length <= 500) {
@@ -344,29 +367,47 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
     })
   }, [indicatorRegistrations, payrollRows])
 
-  const indicatorTotals = useMemo(() => {
+  const payrollIndicators = useMemo(() => {
     const eventGroups: Record<string, number[]> = {
       extras: [36, 40],
       dsr: [65],
-      atestados: [56, 57],
+      atestadosVolue: [56, 57],
       ajuda: [805],
+      faltasRef: [502, 651, 652],
+      atestadosRef: [56, 57],
+      baseAbsenteismoRef: [3, 5],
     }
-    const totals: Record<string, number> = {
+    const totals = {
       extras: 0,
       dsr: 0,
-      atestados: 0,
+      atestadosVolue: 0,
       ajuda: 0,
+      faltasRef: 0,
+      atestadosRef: 0,
+      baseAbsenteismoRef: 0,
     }
+
     filteredPayrollRows.forEach((row) => {
       if (!row.registration) return
       if (row.events === null || row.events === undefined) return
       const value = row.volue ?? 0
+      const reference = row.references_ ?? 0
+
       if (eventGroups.extras.includes(row.events)) totals.extras += value
       if (eventGroups.dsr.includes(row.events)) totals.dsr += value
-      if (eventGroups.atestados.includes(row.events)) totals.atestados += value
+      if (eventGroups.atestadosVolue.includes(row.events)) totals.atestadosVolue += value
       if (eventGroups.ajuda.includes(row.events)) totals.ajuda += value
+
+      if (eventGroups.faltasRef.includes(row.events)) totals.faltasRef += reference
+      if (eventGroups.atestadosRef.includes(row.events)) totals.atestadosRef += reference
+      if (eventGroups.baseAbsenteismoRef.includes(row.events)) totals.baseAbsenteismoRef += reference
     })
-    return totals
+
+    const absenteismoTotalRef = totals.faltasRef + totals.atestadosRef
+    const absenteismoPercent =
+      totals.baseAbsenteismoRef > 0 ? (absenteismoTotalRef / totals.baseAbsenteismoRef) * 100 : 0
+
+    return { ...totals, absenteismoPercent }
   }, [filteredPayrollRows])
 
   const formatIndicator = (value: number) => {
@@ -423,7 +464,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
       if (!info) return
       if (companyFilter && String(info.company ?? '') !== companyFilter) return
       if (sectorFilter && info.sector !== sectorFilter) return
-      const sector = info.sector || 'Sem setor'
+      const sector = abbreviateSector(info.sector)
       if (!sectorMap.has(sector)) {
         sectorMap.set(sector, { admissions: 0, dismissals: 0 })
       }
@@ -451,7 +492,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
   const collaboratorSectorChartData = useMemo(() => {
     const sectorMap = new Map<string, number>()
     closingRegistrations.forEach((registration) => {
-      const sector = employeeInfo.get(registration)?.sector ?? 'Sem setor'
+      const sector = abbreviateSector(employeeInfo.get(registration)?.sector ?? null)
       sectorMap.set(sector, (sectorMap.get(sector) || 0) + 1)
     })
     return Array.from(sectorMap.entries())
@@ -466,7 +507,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
       const regKey = normalizeRegistration(row.registration)
       if (!regKey) return
       if (!closingRegistrations.has(regKey)) return
-      const sector = employeeInfo.get(regKey)?.sector ?? 'Sem setor'
+      const sector = abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
       const value = row.volue ?? 0
       sectorMap.set(sector, (sectorMap.get(sector) || 0) + value)
     })
@@ -493,15 +534,108 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
     }))
   }, [eventsTotalValue, salarySectorSummary])
 
+  const absenteeismSectorChartData = useMemo(() => {
+    const eventGroups = {
+      faltasRef: [502, 651, 652],
+      atestadosRef: [56, 57],
+      baseAbsenteismoRef: [3, 5],
+    }
+
+    const sectorMap = new Map<string, { faltasRef: number; atestadosRef: number; baseAbsenteismoRef: number }>()
+
+    payrollRows.forEach((row) => {
+      if (row.events === null || row.events === undefined) return
+      
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !closingRegistrations.has(regKey)) return
+
+      const sector = abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      if (!sectorMap.has(sector)) {
+        sectorMap.set(sector, { faltasRef: 0, atestadosRef: 0, baseAbsenteismoRef: 0 })
+      }
+
+      const sectorData = sectorMap.get(sector)!
+      const reference = row.references_ ?? 0
+
+      if (eventGroups.faltasRef.includes(row.events)) {
+        sectorData.faltasRef += reference
+      }
+      if (eventGroups.atestadosRef.includes(row.events)) {
+        sectorData.atestadosRef += reference
+      }
+      if (eventGroups.baseAbsenteismoRef.includes(row.events)) {
+        sectorData.baseAbsenteismoRef += reference
+      }
+    })
+
+    return Array.from(sectorMap.entries())
+      .map(([label, values]) => {
+        const absenteismoTotalRef = values.faltasRef + values.atestadosRef
+        const value = values.baseAbsenteismoRef > 0 ? (absenteismoTotalRef / values.baseAbsenteismoRef) * 100 : 0
+        return {
+          label,
+          value,
+        }
+      })
+      .filter((item) => item.value > 0)
+      .sort((a, b) => b.value - a.value)
+  }, [payrollRows, employeeInfo, closingRegistrations])
+
   const countTooltip = ({ active, payload }: TooltipContentProps<any, any>) => {
     if (!active || !payload || payload.length === 0) return null
-    const data = payload[0]?.payload as { label?: string; totalValue?: number } | undefined
+    const data = payload[0]?.payload as { label?: string; totalValue?: number; color: string } | undefined
+    if (!data?.totalValue) return null
     return (
       <div className="rounded-lg border border-blue-500/60 bg-[#0f172a] px-3 py-2 text-xs text-white shadow-lg text-center">
-        <div className="font-semibold">{data?.label}</div>
+        <div className="font-semibold flex items-center justify-center gap-2">
+          <span style={{ backgroundColor: data.color }} className="h-2 w-2 rounded-full" />
+          <div>{data?.label}</div>
+        </div>
         <div className="mt-1 text-purple-300">{Number(data?.totalValue ?? 0).toLocaleString('pt-BR')}</div>
       </div>
     )
+  }
+
+  const turnoverTooltip = ({ active, payload, label }: TooltipContentProps<any, any>) => {
+    if (active && payload && payload.length) {
+      const filteredPayload = payload.filter((pld) => pld.value && (pld.value as number) > 0)
+      if (filteredPayload.length === 0) {
+        return null
+      }
+      return (
+        <div className="rounded-lg border border-blue-500/60 bg-[#0f172a] px-3 py-2 text-xs text-white shadow-lg">
+          <p className="font-semibold text-center mb-2">{label}</p>
+          <div className="space-y-1">
+            {filteredPayload.map((pld) => (
+              <div key={pld.dataKey as string} className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <span style={{ backgroundColor: pld.color }} className="h-2 w-2 rounded-full" />
+                  <span className="text-white/80">{pld.name}:</span>
+                </div>
+                <span className="font-semibold" style={{ color: pld.color }}>
+                  {pld.value as number}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )
+    }
+    return null
+  }
+
+  const percentTooltip = ({ active, payload, label }: TooltipContentProps<any, any>) => {
+    if (active && payload && payload.length) {
+      const value = payload[0].value as number
+      if (!value) return null
+      return (
+        <div className="rounded-lg border border-blue-500/60 bg-[#0f172a] px-3 py-2 text-xs text-white shadow-lg text-center">
+          <div className="font-semibold">{label}</div>
+          <div className="mt-1 text-purple-300">{`${value.toFixed(2)}%`}</div>
+        </div>
+      )
+    }
+    return null
   }
 
   const formatLabelNumber = (value: unknown) => {
@@ -649,12 +783,16 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
           </div>
           <div className="flex-1 flex items-center justify-center">
             <p className="text-2xl font-semibold text-red-200">
-              {isLoadingPayroll ? '...' : formatIndicator(indicatorTotals.atestados)}
+              {isLoadingPayroll ? '...' : formatPercent(payrollIndicators.absenteismoPercent)}
             </p>
           </div>
           <div className="flex items-center justify-between text-[11px] text-white/70 font-semibold">
-            <span>FALTAS</span>
-            <span>ATESTADOS</span>
+            <span>
+              FALTAS: <span className="text-white">{isLoadingPayroll ? '...' : formatIndicator(payrollIndicators.faltasRef)}</span>
+            </span>           
+            <span>
+              ATESTADOS: <span className="text-white">{isLoadingPayroll ? '...' : formatIndicator(payrollIndicators.atestadosRef)}</span>
+            </span>
           </div>
         </div>
       </div>
@@ -736,10 +874,10 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
         <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Indicadores rapidos</p>
         <div className="mt-4 space-y-3">
           {[
-            { label: 'Horas extras', value: formatIndicator(indicatorTotals.extras) },
-            { label: 'DSR', value: formatIndicator(indicatorTotals.dsr) },
-            { label: 'Atestados', value: formatIndicator(indicatorTotals.atestados) },
-            { label: 'Ajuda de Custo', value: formatIndicator(indicatorTotals.ajuda) },
+            { label: 'Horas extras', value: formatIndicator(payrollIndicators.extras) },
+            { label: 'DSR', value: formatIndicator(payrollIndicators.dsr) },
+            { label: 'Atestados', value: formatIndicator(payrollIndicators.atestadosVolue) },
+            { label: 'Ajuda de Custo', value: formatIndicator(payrollIndicators.ajuda) },
             { label: 'Beneficio', value: '--' },
           ].map((item) => (
             <div
@@ -763,7 +901,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
           {closingRegistrations.size.toLocaleString('pt-BR')}
         </span>
       </div>
-      <div className="mt-3 h-64 rounded-lg border border-white/10 bg-white/5">
+      <div className="mt-3 h-64 rounded-lg border border-white/10 bg-white/5 chart-container">
         {collaboratorSectorChartData.length === 0 ? (
           <div className="h-full flex items-center justify-center text-white/50 text-sm">
             Sem dados para exibir.
@@ -781,7 +919,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
               />
               <YAxis tick={{ fill: '#9aa4b3ff', fontSize: 10 }} axisLine={{ stroke: '#475569' }} />
               <RechartsTooltip content={countTooltip} cursor={{ fill: 'transparent' }} />
-              <Bar dataKey="totalValue" radius={[8, 8, 0, 0]}>
+              <Bar dataKey="totalValue" radius={[8, 8, 0, 0]} isAnimationActive={false}>
                 {collaboratorSectorChartData.map((entry) => (
                   <Cell key={entry.label} fill={entry.color} />
                 ))}
@@ -789,8 +927,9 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
                   dataKey="totalValue"
                   position="top"
                   formatter={formatLabelNumber}
-                  fill="#9aa4b3ff"
-                  fontSize={10}
+                  fill="#FFFFFF"
+                  fontSize={12}
+                  isAnimationActive={false}
                 />
               </Bar>
             </BarChart>
@@ -813,9 +952,9 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
           </span>
         </div>
       </div>
-      <div className="mt-3 h-52 rounded-lg border border-white/10 bg-white/5">
+      <div className="mt-3 h-52 rounded-lg border border-white/10 bg-white/5 chart-container">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={turnoverSectorChartData} margin={{ top: 20, right: 16, left: 0, bottom: 12 }}>
+          <BarChart data={turnoverSectorChartData} barGap={0} margin={{ top: 20, right: 16, left: 0, bottom: 12 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
             <XAxis
               dataKey="label"
@@ -825,14 +964,15 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
               axisLine={{ stroke: '#475569' }}
             />
             <YAxis tick={{ fill: '#9aa4b3ff', fontSize: 10 }} axisLine={{ stroke: '#475569' }} />
-            <RechartsTooltip content={countTooltip} cursor={{ fill: 'transparent' }} />
+            <RechartsTooltip content={turnoverTooltip} cursor={{ fill: 'transparent' }} />
             <Bar dataKey="admissions" name="Admissao" fill="#22c55e" radius={[8, 8, 0, 0]} isAnimationActive={false}>
               <LabelList
                 dataKey="admissions"
                 position="top"
                 formatter={formatPositiveLabelNumber}
-                fill="#9aa4b3ff"
-                fontSize={10}
+                fill="#FFFFFF"
+                fontSize={12}
+                isAnimationActive={false}
               />
             </Bar>
             <Bar dataKey="dismissals" name="Demissao" fill="#f43f5e" radius={[8, 8, 0, 0]} isAnimationActive={false}>
@@ -840,8 +980,9 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
                 dataKey="dismissals"
                 position="top"
                 formatter={formatPositiveLabelNumber}
-                fill="#9aa4b3ff"
-                fontSize={10}
+                fill="#FFFFFF"
+                fontSize={12}
+                isAnimationActive={false}
               />
             </Bar>
           </BarChart>
@@ -849,6 +990,57 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
       </div>
     </div>
 
+    <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Absenteísmo por Setor</p>
+      </div>
+      <div className="mt-3 h-64 rounded-lg border border-white/10 bg-white/5 chart-container">
+        {isLoadingPayroll ? (
+          <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+        ) : absenteeismSectorChartData.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-white/50 text-sm">
+            Sem dados para exibir.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={absenteeismSectorChartData} margin={{ top: 20, right: 16, left: 0, bottom: 12 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
+              <XAxis
+                dataKey="label"
+                interval={0}
+                height={80}
+                tick={<SectorTick />}
+                axisLine={{ stroke: '#475569' }}
+              />
+              <YAxis
+                tickFormatter={(tick) => `${tick.toFixed(0)}%`}
+                tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
+                axisLine={{ stroke: '#475569' }}
+              />
+              <RechartsTooltip content={percentTooltip} cursor={{ fill: 'transparent' }} />
+              <Bar dataKey="value" name="Absenteísmo" radius={[8, 8, 0, 0]}>
+                {absenteeismSectorChartData.map((entry, index) => (
+                  <Cell key={entry.label} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                ))}
+                <LabelList
+                  dataKey="value"
+                  position="top"
+                  formatter={(value: unknown) => {
+                    const numeric = Number(value)
+                    if (Number.isFinite(numeric) && numeric > 0) {
+                      return `${numeric.toFixed(1)}%`
+                    }
+                    return ''
+                  }}
+                  fill="#FFFFFF"
+                  fontSize={12}
+                />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+    </div>
   </div>
 )
 

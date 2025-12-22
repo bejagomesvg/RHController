@@ -71,21 +71,41 @@ const VerticalBarChart: React.FC<VerticalBarChartProps> = ({ title, subtitle, da
 
               return (
                 <div key={item.label} className="group relative flex flex-col justify-end items-center gap-2 flex-1 min-w-[50px]">
-                  <div
-                    className="absolute -top-2 mb-2 w-max bg-slate-900 text-white text-xs rounded py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-                    style={{ transform: 'translateX(-50%)', left: '50%' }}
-                  >
-                    {totalLabel}
-                    <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-slate-900"></div>
+                  {/* Tooltip */}
+                  <div className="absolute bottom-full mb-2 w-max bg-slate-900/80 backdrop-blur-sm border border-white/10 rounded-lg px-3 py-2 text-xs shadow-2xl z-10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    <div className="font-bold text-white mb-1">{item.label}</div>
+                    <div className="space-y-1">
+                      {series.map((s) => {
+                        const value = Number(item[s.key]) || 0
+                        if (value === 0) return null // Do not show if value is zero
+                        return (
+                          <div key={s.key} className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                            <span className="text-white/70">{s.label}:</span>
+                            <span className="font-semibold text-white">{formatValue(value)}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                     <div className="mt-2 pt-2 border-t border-white/10 flex items-center gap-2">
+                        <span className="text-white/70 font-bold">Total:</span>
+                        <span className="font-bold text-white">{totalLabel}</span>
+                    </div>
                   </div>
+
+                  {totalValue > 0 && (
+                    <div className="absolute -top-5 text-white text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity">
+                      {totalLabel}
+                    </div>
+                  )}
                   <div
                     className="w-8 relative flex flex-col-reverse rounded-t-md overflow-hidden transition-all duration-300 group-hover:brightness-125"
-                    style={{ height: `${(totalValue / maxVal) * barAreaHeight}px` }}
+                    style={{ height: `${(totalValue / maxVal) * barAreaHeight}px`, transformOrigin: 'bottom' }}
                   >
                     {series.map((s) => {
                       const value = Number(item[s.key]) || 0
                       const segmentHeightPercent = totalValue > 0 ? (value / totalValue) * 100 : 0
-                      return <div key={s.key} style={{ height: `${segmentHeightPercent}%`, backgroundColor: s.color }} title={`${s.label}: ${formatValue(value)}`} />
+                      return <div key={s.key} style={{ height: `${segmentHeightPercent}%`, backgroundColor: s.color }} />
                     })}
                   </div>
                   <span className="text-[11px] text-white/80 text-center w-full truncate pt-1" title={item.label}>
