@@ -19,7 +19,9 @@ import { verifyPassword } from '../services/authService'
 import { insertHistory } from '../services/logService'
 import PayrollConfigPanel from './payroll/PayrollConfigPanel'
 import PayrollMonthlyPanel from './payroll/PayrollMonthlyPanel'
-import PayrollPlaceholderPanel from './payroll/PayrollPlaceholderPanel'
+import PayrollCostsPanel from './payroll/PayrollCostsPanel'
+import PayrollAbsencesPanel from './payroll/PayrollAbsencesPanel'
+import PayrollAlertsPanel from './payroll/PayrollAlertsPanel'
 
 interface PayrollProps {
   onBack: () => void
@@ -945,29 +947,11 @@ const Payroll: React.FC<PayrollProps> = ({
         <div className="flex-1 bg-white/5 border border-white/10 rounded-r-xl rounded-bl-xl rounded-tl-none p-6 shadow-inner shadow-black/10 min-h-[540px]">
           {active === 'folha' && <PayrollMonthlyPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
 
-          {active === 'custos' && (
-            <PayrollPlaceholderPanel
-              icon={DollarSign}
-              title="Visao de custos"
-              description="Em breve um painel consolidado de custos por centro, evento e periodo."
-            />
-          )}
+          {active === 'custos' && <PayrollCostsPanel />}
 
-          {active === 'afastamentos' && (
-            <PayrollPlaceholderPanel
-              icon={CalendarDays}
-              title="Afastamentos"
-              description="Espaco reservado para indicadores de afastamentos vinculados a folha."
-            />
-          )}
+          {active === 'afastamentos' && <PayrollAbsencesPanel />}
 
-          {active === 'alertas' && (
-            <PayrollPlaceholderPanel
-              icon={Bell}
-              title="Alertas"
-              description="Canal para avisos operacionais e pendencias relacionadas a folha."
-            />
-          )}
+          {active === 'alertas' && <PayrollAlertsPanel />}
 
           {active === 'config' && (
             <PayrollConfigPanel

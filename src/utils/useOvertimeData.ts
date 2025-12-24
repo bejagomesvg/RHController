@@ -319,8 +319,12 @@ export const useOvertimeData = ({
       currentValues.value100 += hourlyRate * 2 * (payable100 / 60)
       valuesMap.set(sector, currentValues)
     })
-    const sectorHours = Array.from(hoursMap.values()).sort((a, b) => a.sector.localeCompare(b.sector))
-    const sectorValues = Array.from(valuesMap.values()).sort((a, b) => a.sector.localeCompare(b.sector))
+    const sectorHours = Array.from(hoursMap.values())
+      .filter(s => s.total60 !== 0 || s.total100 !== 0) // Filter out zero-value hours
+      .sort((a, b) => a.sector.localeCompare(b.sector))
+    const sectorValues = Array.from(valuesMap.values())
+      .filter(s => s.value60 !== 0 || s.value100 !== 0) // Filter out zero-value money
+      .sort((a, b) => a.sector.localeCompare(b.sector))
     return {
       sectorHoursChartData: sectorHours.map(s => ({ label: s.sector, total60: s.total60, total100: s.total100 })),
       sectorValuesChartData: sectorValues.map(s => ({ label: s.sector, value60: s.value60, value100: s.value100 })),

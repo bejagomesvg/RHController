@@ -919,7 +919,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
               />
               <YAxis tick={{ fill: '#9aa4b3ff', fontSize: 10 }} axisLine={{ stroke: '#475569' }} />
               <RechartsTooltip content={countTooltip} cursor={{ fill: 'transparent' }} />
-              <Bar dataKey="totalValue" radius={[8, 8, 0, 0]} isAnimationActive={false}>
+              <Bar dataKey="totalValue" radius={[8, 8, 0, 0]}>
                 {collaboratorSectorChartData.map((entry) => (
                   <Cell key={entry.label} fill={entry.color} />
                 ))}
@@ -929,7 +929,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
                   formatter={formatLabelNumber}
                   fill="#FFFFFF"
                   fontSize={12}
-                  isAnimationActive={false}
+                 
                 />
               </Bar>
             </BarChart>
@@ -965,24 +965,24 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
             />
             <YAxis tick={{ fill: '#9aa4b3ff', fontSize: 10 }} axisLine={{ stroke: '#475569' }} />
             <RechartsTooltip content={turnoverTooltip} cursor={{ fill: 'transparent' }} />
-            <Bar dataKey="admissions" name="Admissao" fill="#22c55e" radius={[8, 8, 0, 0]} isAnimationActive={false}>
+            <Bar dataKey="admissions" name="Admissao" fill="#22c55e" radius={[8, 8, 0, 0]}>
               <LabelList
                 dataKey="admissions"
                 position="top"
                 formatter={formatPositiveLabelNumber}
                 fill="#FFFFFF"
                 fontSize={12}
-                isAnimationActive={false}
+               
               />
             </Bar>
-            <Bar dataKey="dismissals" name="Demissao" fill="#f43f5e" radius={[8, 8, 0, 0]} isAnimationActive={false}>
+            <Bar dataKey="dismissals" name="Demissao" fill="#f43f5e" radius={[8, 8, 0, 0]}>
               <LabelList
                 dataKey="dismissals"
                 position="top"
                 formatter={formatPositiveLabelNumber}
                 fill="#FFFFFF"
                 fontSize={12}
-                isAnimationActive={false}
+               
               />
             </Bar>
           </BarChart>
