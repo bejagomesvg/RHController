@@ -947,9 +947,9 @@ const Payroll: React.FC<PayrollProps> = ({
         <div className="flex-1 bg-white/5 border border-white/10 rounded-r-xl rounded-bl-xl rounded-tl-none p-6 shadow-inner shadow-black/10 min-h-[540px]">
           {active === 'folha' && <PayrollMonthlyPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
 
-          {active === 'custos' && <PayrollCostsPanel />}
+          {active === 'custos' && <PayrollCostsPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
 
-          {active === 'afastamentos' && <PayrollAbsencesPanel />}
+          {active === 'afastamentos' && <PayrollAbsencesPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
 
           {active === 'alertas' && <PayrollAlertsPanel />}
 

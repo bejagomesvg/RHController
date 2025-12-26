@@ -5,6 +5,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
+  LineChart,
   LabelList,
   ResponsiveContainer,
   Tooltip as RechartsTooltip,
@@ -12,6 +14,7 @@ import {
   YAxis,
 } from 'recharts'
 import type { TooltipContentProps } from 'recharts'
+import { abbreviateSector } from '../../utils/abbreviateSector'
 
 type PayrollCostsPanelProps = {
   supabaseUrl?: string
@@ -31,6 +34,7 @@ type EmployeeSectorRow = {
   status: number | null
   date_hiring: string | null
   date_status: string | null
+  name?: string | null
 }
 
 type PayrollEventRow = {
@@ -46,6 +50,8 @@ const CHART_COLORS = ['#8b5cf6', '#f97316', '#ef4444', '#f59e0b', '#22c55e', '#0
 // Hypothetical Cost Event IDs
 const COST_EVENT_IDS = {
   HORAS_EXTRAS: [36, 40],
+  DSR_EXTRAS: [65],
+  ATESTADOS: [56, 57],
   INSS_EMPRESA: [800],
   FGTS_EMPRESA: [801],
   PLANO_SAUDE_EMPRESA: [802],
@@ -58,7 +64,17 @@ const COST_EVENT_IDS = {
 const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supabaseUrl }) => {
   const [closingRows, setClosingRows] = useState<ClosingRow[]>([])
   const [employeeInfo, setEmployeeInfo] = useState<
-    Map<string, { sector: string | null; company: number | null; status: number | null; date_hiring: string | null; date_status: string | null }>
+    Map<
+      string,
+      {
+        sector: string | null
+        company: number | null
+        status: number | null
+        date_hiring: string | null
+        date_status: string | null
+        name: string | null
+      }
+    >
   >(new Map())
   const [costEventRows, setCostEventRows] = useState<PayrollEventRow[]>([])
   const [isLoadingCosts, setIsLoadingCosts] = useState(false)
@@ -66,6 +82,7 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
   const [yearFilter, setYearFilter] = useState('')
   const [monthFilter, setMonthFilter] = useState('')
   const [sectorFilter, setSectorFilter] = useState('')
+  const [hasInitializedMonth, setHasInitializedMonth] = useState(false)
 
   const parseYearMonth = (value?: string | null) => {
     if (!value) return null
@@ -88,45 +105,6 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
     return String(value).trim()
   }
 
-  const abbreviateSector = (sector: string | null): string => {
-    if (!sector) return 'Sem setor';
-    let abbreviated = sector.toUpperCase();
-    abbreviated = abbreviated.replace('ADMINISTRATIVO', 'ADM.');
-    abbreviated = abbreviated.replace('ADMINISTRAÇÃO', 'ADM.');
-    abbreviated = abbreviated.replace('HIGIENIZAÇÃO', 'HIG.');
-    abbreviated = abbreviated.replace('INDUSTRIAL', 'IND.');
-    abbreviated = abbreviated.replace('SECUNDÁRIA', 'SEC.');
-    abbreviated = abbreviated.replace('ALMOXARIFADO', 'ALMOX.');
-    abbreviated = abbreviated.replace('EMBARQUE', 'EMB.');
-    abbreviated = abbreviated.replace('BUCHARIA', 'BUCH.');
-    abbreviated = abbreviated.replace('TÉCNICO', 'TÉC.');
-    abbreviated = abbreviated.replace('INFORMÁTICA', 'INFOR.');
-    abbreviated = abbreviated.replace('CONTROLE DE', 'C.');
-    abbreviated = abbreviated.replace('SERVIÇOS', 'SERV.');
-    abbreviated = abbreviated.replace('GERAIS', 'G.');
-    abbreviated = abbreviated.replace('DEP.PESSOAL', 'D. P.');
-    abbreviated = abbreviated.replace('PANTANEIRA', '');
-    abbreviated = abbreviated.replace('SALA DE', 'S.');
-    return abbreviated;
-  };
-
-  const SectorTick = ({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) => {
-    if (x === undefined || y === undefined || !payload) return null
-    return (
-      <g transform={`translate(${x},${y}) rotate(-90)`}>
-        <text
-          textAnchor="end"
-          dominantBaseline="central"
-          fill="#9aa4b3ff"
-          fontSize={10}
-          fontWeight={600}
-        >
-          {payload.value}
-        </text>
-      </g>
-    )
-  }
-
   const countTooltip = ({ active, payload }: TooltipContentProps<any, any>) => {
     if (!active || !payload || payload.length === 0) return null
     const data = payload[0]?.payload as { label?: string; totalValue?: number; color: string } | undefined
@@ -145,16 +123,47 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(value)
 
+  const formatNumber = (value: number) => new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value)
+
   const formatCurrencyForLabelList = (value: unknown) => {
     const numericValue = Number(value);
     return Number.isFinite(numericValue) ? formatCurrency(numericValue) : '';
   };
+
+  const formatNumberForLabelList = (value: unknown) => {
+    const numericValue = Number(value)
+    return Number.isFinite(numericValue) ? formatNumber(numericValue) : ''
+  }
+
+  const SectorTick = ({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) => {
+    if (x === undefined || y === undefined || !payload) return null
+    return (
+      <g transform={`translate(${x},${y}) rotate(-90)`}>
+        <text
+          textAnchor="end"
+          dominantBaseline="central"
+          fill="#9aa4b3ff"
+          fontSize={10}
+          fontWeight={600}
+        >
+          {payload.value}
+        </text>
+      </g>
+    )
+  }
 
   const formatCompanyLabel = (value: number) => {
     if (value === 4) return 'Frigosul'
     if (value === 5) return 'Pantaneira'
     return String(value)
   }
+
+  const formatMonthLabel = (month: number) => {
+    const date = new Date(2000, month - 1, 1)
+    return date.toLocaleString('pt-BR', { month: 'short' }).toUpperCase()
+  }
+
+  const titleSuffix = monthFilter === '' ? ' - ANUAL' : ''
 
   useEffect(() => {
     if (!supabaseUrl || !supabaseKey) {
@@ -193,7 +202,7 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
 
         const employeeData: EmployeeSectorRow[] = []
         const employeeUrl = new URL(`${supabaseUrl}/rest/v1/employee`)
-        employeeUrl.searchParams.set('select', 'registration,sector,company,status,date_hiring,date_status')
+        employeeUrl.searchParams.set('select', 'registration,sector,company,status,date_hiring,date_status,name')
         const employeePageSize = 1000
         let employeeStart = 0
         let employeeHasMore = true
@@ -217,7 +226,10 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
             employeeStart += employeePageSize
           }
         }
-        const sectorMap = new Map<string, { sector: string | null; company: number | null; status: number | null; date_hiring: string | null; date_status: string | null }>()
+        const sectorMap = new Map<
+          string,
+          { sector: string | null; company: number | null; status: number | null; date_hiring: string | null; date_status: string | null; name: string | null }
+        >()
         employeeData.forEach((row) => {
           const regKey = normalizeRegistration(row.registration)
           if (!regKey) return
@@ -227,6 +239,7 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
             status: row.status ?? null,
             date_hiring: row.date_hiring ?? null,
             date_status: row.date_status ?? null,
+            name: row.name ?? null,
           })
         })
         setEmployeeInfo(sectorMap)
@@ -242,11 +255,20 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
   }, [supabaseKey, supabaseUrl])
 
   const companyOptions = useMemo(() => {
-    const values = closingRows
-      .map((row) => row.company)
-      .filter((value): value is number => value !== null && value !== undefined)
-    return Array.from(new Set(values)).sort((a, b) => a - b)
-  }, [closingRows])
+    const companies = new Set<number>()
+    closingRows.forEach((row) => {
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey) return
+      const company = employeeInfo.get(regKey)?.company
+      if (company !== null && company !== undefined) companies.add(company)
+    })
+    if (companies.size === 0) {
+      employeeInfo.forEach((info) => {
+        if (info.company !== null && info.company !== undefined) companies.add(info.company)
+      })
+    }
+    return Array.from(companies).sort((a, b) => a - b)
+  }, [closingRows, employeeInfo])
 
   const competenceOptions = useMemo(() => {
     const values = closingRows
@@ -275,13 +297,15 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
     const sectors: string[] = []
     const targetYear = Number(yearFilter)
     const targetMonth = Number(monthFilter)
+    const hasMonthFilter = monthFilter !== ''
     closingRows.forEach((row) => {
-      if (companyFilter && String(row.company ?? '') !== companyFilter) return
-      const parsed = parseYearMonth(row.competence)
-      if (yearFilter && (!parsed || parsed.year !== targetYear)) return
-      if (monthFilter && (!parsed || parsed.month !== targetMonth)) return
       const regKey = normalizeRegistration(row.registration)
       if (!regKey) return
+      const company = employeeInfo.get(regKey)?.company
+      if (companyFilter && String(company ?? '') !== companyFilter) return
+      const parsed = parseYearMonth(row.competence)
+      if (yearFilter && (!parsed || parsed.year !== targetYear)) return
+      if (hasMonthFilter && (!parsed || parsed.month !== targetMonth)) return
       const sector = employeeInfo.get(regKey)?.sector
       if (sector) sectors.push(sector)
     })
@@ -289,24 +313,27 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
   }, [closingRows, companyFilter, employeeInfo, monthFilter, yearFilter])
 
   useEffect(() => {
-    if (!companyFilter && companyOptions.length > 0) {
+    if (companyOptions.length > 0 && (!companyFilter || !companyOptions.includes(Number(companyFilter)))) {
       setCompanyFilter(String(companyOptions[0]))
     }
   }, [companyOptions, companyFilter])
 
   useEffect(() => {
-    if (!yearFilter && yearOptions.length > 0) {
+    if (yearOptions.length > 0 && (!yearFilter || !yearOptions.includes(Number(yearFilter)))) {
       setYearFilter(String(yearOptions[0]))
     }
   }, [yearOptions, yearFilter])
 
   useEffect(() => {
-    if (!monthFilter && monthOptions.length > 0) {
+    if (!hasInitializedMonth && monthOptions.length > 0 && !monthFilter) {
       setMonthFilter(String(monthOptions[0]))
-    } else if (monthFilter && monthOptions.length > 0 && !monthOptions.includes(Number(monthFilter))) {
+      setHasInitializedMonth(true)
+      return
+    }
+    if (monthFilter && monthFilter !== '' && monthOptions.length > 0 && !monthOptions.includes(Number(monthFilter))) {
       setMonthFilter(String(monthOptions[0]))
     }
-  }, [monthFilter, monthOptions])
+  }, [hasInitializedMonth, monthFilter, monthOptions])
 
   useEffect(() => {
     if (sectorFilter && sectorOptions.length > 0 && !sectorOptions.includes(sectorFilter)) {
@@ -316,51 +343,54 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
 
   const filteredRegistrations = useMemo(() => {
     const regs = new Set<string>()
-    const targetYear = Number(yearFilter)
-    const targetMonth = Number(monthFilter)
-    closingRows.forEach((row) => {
-      if (companyFilter && String(row.company ?? '') !== companyFilter) return
-      const parsed = parseYearMonth(row.competence)
-      if (yearFilter && (!parsed || parsed.year !== targetYear)) return
-      if (monthFilter && (!parsed || parsed.month !== targetMonth)) return
-      if (sectorFilter) {
-        const regKey = normalizeRegistration(row.registration)
-        const sector = regKey ? employeeInfo.get(regKey)?.sector ?? null : null
-        if (!sector || sector !== sectorFilter) return
-      }
-      const regKey = normalizeRegistration(row.registration)
-      if (!regKey) return
+    employeeInfo.forEach((info, regKey) => {
+      if (companyFilter && String(info.company ?? '') !== companyFilter) return
+      if (sectorFilter && info.sector !== sectorFilter) return
       regs.add(regKey)
     })
     return regs
-  }, [closingRows, companyFilter, employeeInfo, monthFilter, sectorFilter, yearFilter])
+  }, [companyFilter, employeeInfo, sectorFilter])
 
   useEffect(() => {
     if (!supabaseUrl || !supabaseKey) return
-    if (!yearFilter || !monthFilter) return
-    if (filteredRegistrations.size === 0) {
-      setCostEventRows([])
-      return
-    }
+    if (!yearFilter) return
     const controller = new AbortController()
     const fetchCosts = async () => {
       setIsLoadingCosts(true)
       try {
-        const competence = `${yearFilter}-${String(monthFilter).padStart(2, '0')}-01`
+        const targetCompetences =
+          monthFilter === ''
+            ? competenceOptions
+                .filter((value) => {
+                  const parsed = parseYearMonth(value)
+                  return parsed && parsed.year === Number(yearFilter)
+                })
+                .map((value) => `${value}`)
+            : [`${yearFilter}-${String(monthFilter).padStart(2, '0')}-01`]
+
+        if (targetCompetences.length === 0) {
+          setCostEventRows([])
+          return
+        }
+
         const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
         url.searchParams.set('select', 'registration,events,volue,references_,competence')
-        url.searchParams.set('competence', `eq.${competence}`)
-        
-        const allCostEventIds = Object.values(COST_EVENT_IDS).flat();
+        if (targetCompetences.length === 1) {
+          url.searchParams.set('competence', `eq.${targetCompetences[0]}`)
+        } else {
+          url.searchParams.set('competence', `in.(${targetCompetences.join(',')})`)
+        }
+
+        const allCostEventIds = Object.values(COST_EVENT_IDS).flat()
         if (allCostEventIds.length > 0) {
-            url.searchParams.set('events', `in.(${allCostEventIds.join(',')})`);
+          url.searchParams.set('events', `in.(${allCostEventIds.join(',')})`)
         }
 
         const registrations = Array.from(filteredRegistrations)
         if (registrations.length > 0 && registrations.length <= 500) {
           url.searchParams.set('registration', `in.(${registrations.join(',')})`)
         }
-        
+
         const payrollData: PayrollEventRow[] = []
         const pageSize = 1000
         let start = 0
@@ -396,81 +426,311 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
     }
     fetchCosts()
     return () => controller.abort()
-  }, [filteredRegistrations, supabaseKey, supabaseUrl, yearFilter, monthFilter])
+  }, [competenceOptions, filteredRegistrations, supabaseKey, supabaseUrl, yearFilter, monthFilter])
 
   const costIndicators = useMemo(() => {
-    let totalCost = 0
-    let horasExtrasCost = 0
-    let inssEmpresaCost = 0
-    let fgtsEmpresaCost = 0
-    let planoSaudeCost = 0
-    let valeTransporteCost = 0
-    let valeRefeicaoCost = 0
-    let outrosEncargosCost = 0
-    let multaFgtsCost = 0
-
-    costEventRows.forEach((row) => {
-      const value = row.volue ?? 0
-      totalCost += value
-
-      if (COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events!)) horasExtrasCost += value
-      if (COST_EVENT_IDS.INSS_EMPRESA.includes(row.events!)) inssEmpresaCost += value
-      if (COST_EVENT_IDS.FGTS_EMPRESA.includes(row.events!)) fgtsEmpresaCost += value
-      if (COST_EVENT_IDS.PLANO_SAUDE_EMPRESA.includes(row.events!)) planoSaudeCost += value
-      if (COST_EVENT_IDS.VALE_TRANSPORTE_EMPRESA.includes(row.events!)) valeTransporteCost += value
-      if (COST_EVENT_IDS.VALE_REFEICAO_EMPRESA.includes(row.events!)) valeRefeicaoCost += value
-      if (COST_EVENT_IDS.OUTROS_ENCARGOS.includes(row.events!)) outrosEncargosCost += value
-      if (COST_EVENT_IDS.MULTA_FGTS.includes(row.events!)) multaFgtsCost += value
-    })
-
-    const avgCostPerEmployee = filteredRegistrations.size > 0 ? totalCost / filteredRegistrations.size : 0
-
-    return {
-      totalCost,
-      avgCostPerEmployee,
-      horasExtrasCost,
-      inssEmpresaCost,
-      fgtsEmpresaCost,
-      planoSaudeCost,
-      valeTransporteCost,
-      valeRefeicaoCost,
-      outrosEncargosCost,
-      multaFgtsCost,
+    const totals = {
+      totalCost: 0,
+      horasExtrasCost: 0,
+      horasExtras60: 0,
+      horasExtras100: 0,
+      dsrExtrasCost: 0,
+      atestadosCost: 0,
+      atestadosNormal: 0,
+      atestadosNoturno: 0,
+      inssEmpresaCost: 0,
+      fgtsEmpresaCost: 0,
+      planoSaudeCost: 0,
+      valeTransporteCost: 0,
+      valeRefeicaoCost: 0,
+      outrosEncargosCost: 0,
+      multaFgtsCost: 0,
     }
-  }, [costEventRows, filteredRegistrations])
 
-  const costByTypeChartData = useMemo(() => {
-    const data = [
-      { label: 'Horas Extras', value: costIndicators.horasExtrasCost },
-      { label: 'INSS Empresa', value: costIndicators.inssEmpresaCost },
-      { label: 'FGTS Empresa', value: costIndicators.fgtsEmpresaCost },
-      { label: 'Plano Saúde', value: costIndicators.planoSaudeCost },
-      { label: 'Vale Transporte', value: costIndicators.valeTransporteCost },
-      { label: 'Vale Refeição', value: costIndicators.valeRefeicaoCost },
-      { label: 'Outros Encargos', value: costIndicators.outrosEncargosCost },
-      { label: 'Multa FGTS', value: costIndicators.multaFgtsCost },
-    ].filter(item => item.value > 0)
-
-    const total = data.reduce((sum, item) => sum + item.value, 0)
-    return data.map((item, idx) => ({
-      ...item,
-      percent: total > 0 ? (item.value / total) * 100 : 0,
-      color: CHART_COLORS[idx % CHART_COLORS.length]
-    })).sort((a,b) => b.value - a.value)
-  }, [costIndicators])
-
-  const costBySectorChartData = useMemo(() => {
-    const sectorCosts = new Map<string, number>()
     costEventRows.forEach((row) => {
       const regKey = normalizeRegistration(row.registration)
       if (!regKey || !filteredRegistrations.has(regKey)) return
-      const sector = abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
-      sectorCosts.set(sector, (sectorCosts.get(sector) || 0) + (row.volue ?? 0))
+      const value = row.volue ?? 0
+      const event = row.events ?? undefined
+      totals.totalCost += value
+
+      if (event && COST_EVENT_IDS.HORAS_EXTRAS.includes(event)) {
+        totals.horasExtrasCost += value
+        if (event === 40) totals.horasExtras60 += value
+        if (event === 36) totals.horasExtras100 += value
+      }
+      if (event && COST_EVENT_IDS.DSR_EXTRAS?.includes?.(event)) totals.dsrExtrasCost += value
+      if (event && COST_EVENT_IDS.ATESTADOS?.includes?.(event)) {
+        totals.atestadosCost += value
+        if (event === 56) totals.atestadosNormal += value
+        if (event === 57) totals.atestadosNoturno += value
+      }
+      if (event && COST_EVENT_IDS.INSS_EMPRESA.includes(event)) totals.inssEmpresaCost += value
+      if (event && COST_EVENT_IDS.FGTS_EMPRESA.includes(event)) totals.fgtsEmpresaCost += value
+      if (event && COST_EVENT_IDS.PLANO_SAUDE_EMPRESA.includes(event)) totals.planoSaudeCost += value
+      if (event && COST_EVENT_IDS.VALE_TRANSPORTE_EMPRESA.includes(event)) totals.valeTransporteCost += value
+      if (event && COST_EVENT_IDS.VALE_REFEICAO_EMPRESA.includes(event)) totals.valeRefeicaoCost += value
+      if (event && COST_EVENT_IDS.OUTROS_ENCARGOS.includes(event)) totals.outrosEncargosCost += value
+      if (event && COST_EVENT_IDS.MULTA_FGTS.includes(event)) totals.multaFgtsCost += value
     })
-    return Array.from(sectorCosts.entries())
-      .map(([label, totalValue], idx) => ({ label, totalValue, color: CHART_COLORS[idx % CHART_COLORS.length] }))
-      .sort((a,b) => b.totalValue - a.totalValue)
-  }, [costEventRows, filteredRegistrations, employeeInfo])
+
+    const avgCostPerEmployee = filteredRegistrations.size > 0 ? totals.totalCost / filteredRegistrations.size : 0
+
+    return {
+      ...totals,
+      avgCostPerEmployee,
+    }
+  }, [costEventRows, filteredRegistrations])
+
+  const extraChartData = useMemo(() => {
+    const isAllMonths = monthFilter === ''
+    const map = new Map<string, number>()
+
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const parsed = parseYearMonth(row.competence)
+      if (!parsed) return
+      if (Number(yearFilter || parsed.year) !== parsed.year) return
+
+      const key = isAllMonths ? formatMonthLabel(parsed.month) : abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      map.set(key, (map.get(key) || 0) + (row.volue ?? 0))
+    })
+
+    const entries = Array.from(map.entries())
+    const sorted = isAllMonths
+      ? entries.sort((a, b) => a[0].localeCompare(b[0]))
+      : entries.sort((a, b) => b[1] - a[1])
+
+    return sorted.map(([label, totalValue], idx) => ({
+      label,
+      totalValue,
+      color: CHART_COLORS[idx % CHART_COLORS.length],
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
+
+  const dsrChartData = useMemo(() => {
+    const isAllMonths = monthFilter === ''
+    const map = new Map<string, number>()
+
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.DSR_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const parsed = parseYearMonth(row.competence)
+      if (!parsed) return
+      if (Number(yearFilter || parsed.year) !== parsed.year) return
+
+      const key = isAllMonths ? formatMonthLabel(parsed.month) : abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      map.set(key, (map.get(key) || 0) + (row.volue ?? 0))
+    })
+
+    const entries = Array.from(map.entries())
+    const sorted = isAllMonths
+      ? entries.sort((a, b) => a[0].localeCompare(b[0]))
+      : entries.sort((a, b) => b[1] - a[1])
+
+    return sorted.map(([label, totalValue], idx) => ({
+      label,
+      totalValue,
+      color: CHART_COLORS[idx % CHART_COLORS.length],
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
+
+  const atestadosChartData = useMemo(() => {
+    const isAllMonths = monthFilter === ''
+    const map = new Map<string, number>()
+
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.ATESTADOS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const parsed = parseYearMonth(row.competence)
+      if (!parsed) return
+      if (Number(yearFilter || parsed.year) !== parsed.year) return
+
+      const key = isAllMonths ? formatMonthLabel(parsed.month) : abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      map.set(key, (map.get(key) || 0) + (row.volue ?? 0))
+    })
+
+    const entries = Array.from(map.entries())
+    const sorted = isAllMonths
+      ? entries.sort((a, b) => a[0].localeCompare(b[0]))
+      : entries.sort((a, b) => b[1] - a[1])
+
+    return sorted.map(([label, totalValue], idx) => ({
+      label,
+      totalValue,
+      color: CHART_COLORS[idx % CHART_COLORS.length],
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
+
+  const extraReferenceChartData = useMemo(() => {
+    const isAllMonths = monthFilter === ''
+    const map = new Map<string, number>()
+
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const parsed = parseYearMonth(row.competence)
+      if (!parsed) return
+      if (Number(yearFilter || parsed.year) !== parsed.year) return
+
+      const key = isAllMonths ? formatMonthLabel(parsed.month) : abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      map.set(key, (map.get(key) || 0) + (row.references_ ?? 0))
+    })
+
+    const entries = Array.from(map.entries())
+    const sorted = isAllMonths
+      ? entries.sort((a, b) => a[0].localeCompare(b[0]))
+      : entries.sort((a, b) => b[1] - a[1])
+
+    return sorted.map(([label, totalValue], idx) => ({
+      label,
+      totalValue,
+      color: CHART_COLORS[idx % CHART_COLORS.length],
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
+
+  const extraSpeedChartData = useMemo(() => {
+    const isAllMonths = monthFilter === ''
+    const map = new Map<
+      string,
+      {
+        total60: number
+        total100: number
+      }
+    >()
+
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const parsed = parseYearMonth(row.competence)
+      if (!parsed) return
+      if (Number(yearFilter || parsed.year) !== parsed.year) return
+
+      const key = isAllMonths ? formatMonthLabel(parsed.month) : abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      if (!map.has(key)) {
+        map.set(key, { total60: 0, total100: 0 })
+      }
+      if (row.events === 40) {
+        map.get(key)!.total60 += row.volue ?? 0
+      }
+      if (row.events === 36) {
+        map.get(key)!.total100 += row.volue ?? 0
+      }
+    })
+
+    const entries = Array.from(map.entries())
+    const sorted = isAllMonths
+      ? entries.sort((a, b) => a[0].localeCompare(b[0]))
+      : entries.sort((a, b) => (b[1].total60 + b[1].total100) - (a[1].total60 + a[1].total100))
+
+    return sorted.map(([label, totals]) => ({
+      label,
+      total60: totals.total60,
+      total100: totals.total100,
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
+
+  const extraReferenceSplitChartData = useMemo(() => {
+    const isAllMonths = monthFilter === ''
+    const map = new Map<
+      string,
+      {
+        ref60: number
+        ref100: number
+      }
+    >()
+
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const parsed = parseYearMonth(row.competence)
+      if (!parsed) return
+      if (Number(yearFilter || parsed.year) !== parsed.year) return
+
+      const key = isAllMonths ? formatMonthLabel(parsed.month) : abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      if (!map.has(key)) {
+        map.set(key, { ref60: 0, ref100: 0 })
+      }
+      if (row.events === 40) {
+        map.get(key)!.ref60 += row.references_ ?? 0
+      }
+      if (row.events === 36) {
+        map.get(key)!.ref100 += row.references_ ?? 0
+      }
+    })
+
+    const entries = Array.from(map.entries())
+    const sorted = isAllMonths
+      ? entries.sort((a, b) => a[0].localeCompare(b[0]))
+      : entries.sort((a, b) => (b[1].ref60 + b[1].ref100) - (a[1].ref60 + a[1].ref100))
+
+    return sorted.map(([label, totals]) => ({
+      label,
+      ref60: totals.ref60,
+      ref100: totals.ref100,
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
+
+  const topValueChartData = useMemo(() => {
+    const map = new Map<string, { name: string; totalValue: number; totalRef: number; sector: string | null }>()
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const info = employeeInfo.get(regKey)
+      const name = info?.name || regKey
+      const sector = abbreviateSector(info?.sector ?? null)
+      if (!map.has(regKey)) {
+        map.set(regKey, { name, totalValue: 0, totalRef: 0, sector })
+      }
+      map.get(regKey)!.totalValue += row.volue ?? 0
+      map.get(regKey)!.totalRef += row.references_ ?? 0
+    })
+    const entries = Array.from(map.entries()).sort((a, b) => b[1].totalValue - a[1].totalValue).slice(0, 10)
+    return entries.map(([reg, data], idx) => ({
+      key: reg,
+      label: data.name,
+      totalValue: data.totalValue,
+      totalRef: data.totalRef,
+      sector: data.sector,
+      color: CHART_COLORS[idx % CHART_COLORS.length],
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations])
+
+  const topReferenceChartData = useMemo(() => {
+    const map = new Map<string, { name: string; totalRef: number; sector: string | null }>()
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const info = employeeInfo.get(regKey)
+      const name = info?.name || regKey
+      const sector = abbreviateSector(info?.sector ?? null)
+      if (!map.has(regKey)) {
+        map.set(regKey, { name, totalRef: 0, sector })
+      }
+      map.get(regKey)!.totalRef += row.references_ ?? 0
+    })
+    const entries = Array.from(map.entries())
+      .sort((a, b) => b[1].totalRef - a[1].totalRef)
+      .slice(0, 10)
+
+    return entries.map(([reg, data], idx) => ({
+      key: reg,
+      label: data.name,
+      totalValue: data.totalRef,
+      totalRef: data.totalRef,
+      sector: data.sector,
+      color: CHART_COLORS[idx % CHART_COLORS.length],
+    }))
+  }, [costEventRows, employeeInfo, filteredRegistrations])
 
   const handleClearFilters = () => {
     setCompanyFilter(companyOptions.length ? String(companyOptions[0]) : '')
@@ -519,6 +779,9 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
               onChange={(event) => setMonthFilter(event.target.value)}
               className="bg-white/5 text-emerald-300 text-[11px] border border-white/15 rounded-md px-2 py-1.5 outline-none focus:border-emerald-400"
             >
+              <option value="" className="bg-[#1f2c4d] text-emerald-300">
+                --
+              </option>
               {monthOptions.map((month) => (
                 <option key={month} value={String(month)} className="bg-[#1f2c4d] text-emerald-300">
                   {String(month).padStart(2, '0')}
@@ -552,58 +815,73 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <div className="bg-gradient-to-br from-indigo-300/25 via-indigo-500/20 to-slate-900/45 border border-indigo-300/30 rounded-xl p-4 shadow-lg">
+        <div className="bg-gradient-to-br from-indigo-300/25 via-indigo-500/20 to-slate-900/45 border border-indigo-300/30 rounded-xl p-3 shadow-lg">
           <div className="flex flex-col h-full">
             <div className="flex items-start justify-between">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Custo Total</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Horas Extras</p>
               <div className="-mt-1">
                 <PiggyBank className="w-5 h-5 text-indigo-300" />
               </div>
             </div>
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex flex-col items-center justify-center">
               <p className="text-2xl font-semibold text-indigo-200">
-                {isLoadingCosts ? '...' : formatCurrency(costIndicators.totalCost)}
+                {isLoadingCosts ? '...' : formatCurrency(costIndicators.horasExtrasCost)}
               </p>
+
+              <div className="flex items-center justify-between gap-6 flex-wrap text-[11px] text-white/70 font-semibold mt-1 w-full max-w-[280px]">
+                <span>
+                  60% <span className="text-white">{isLoadingCosts ? '...' : formatCurrency(costIndicators.horasExtras60)}</span>
+                </span>
+                <span>
+                  100% <span className="text-white">{isLoadingCosts ? '...' : formatCurrency(costIndicators.horasExtras100)}</span>
+                </span>
+              </div>
             </div>
-            <div className="h-4" />
           </div>
         </div>
-        <div className="bg-gradient-to-br from-green-300/25 via-green-500/20 to-slate-900/45 border border-green-300/30 rounded-xl p-4 shadow-lg">
+        <div className="bg-gradient-to-br from-green-300/25 via-green-500/20 to-slate-900/45 border border-green-300/30 rounded-xl p-3 shadow-lg">
           <div className="flex flex-col h-full">
             <div className="flex items-start justify-between">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Custo p/ Colaborador</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">DSR s/ Horas Extras</p>
               <div className="-mt-1">
                 <Users className="w-5 h-5 text-green-300" />
               </div>
             </div>
             <div className="flex-1 flex items-center justify-center">
               <p className="text-2xl font-semibold text-green-200">
-                {isLoadingCosts ? '...' : formatCurrency(costIndicators.avgCostPerEmployee)}
+                {isLoadingCosts ? '...' : formatCurrency(costIndicators.dsrExtrasCost)}
               </p>
             </div>
-            <div className="h-4" />
+            
           </div>
         </div>
-        <div className="bg-gradient-to-br from-yellow-300/25 via-yellow-500/20 to-slate-900/45 border border-yellow-300/30 rounded-xl p-4 shadow-lg">
+        <div className="bg-gradient-to-br from-yellow-300/25 via-yellow-500/20 to-slate-900/45 border border-yellow-300/30 rounded-xl p-3 shadow-lg">
           <div className="flex flex-col h-full">
             <div className="flex items-start justify-between">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Horas Extras</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Custos c/ Atestados</p>
               <div className="-mt-1">
                 <ReceiptText className="w-5 h-5 text-yellow-300" />
               </div>
             </div>
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex flex-col items-center justify-center">
               <p className="text-2xl font-semibold text-yellow-200">
-                {isLoadingCosts ? '...' : formatCurrency(costIndicators.horasExtrasCost)}
+                {isLoadingCosts ? '...' : formatCurrency(costIndicators.atestadosCost)}
               </p>
+              <div className="flex items-center justify-between gap-6 flex-wrap text-[11px] text-white/70 font-semibold mt-1 w-full max-w-[280px]">
+                <span>
+                  Normal: <span className="text-white">{isLoadingCosts ? '...' : formatCurrency(costIndicators.atestadosNormal)}</span>
+                </span>
+                <span>
+                  Not.: <span className="text-white">{isLoadingCosts ? '...' : formatCurrency(costIndicators.atestadosNoturno)}</span>
+                </span>
+              </div>
             </div>
-            <div className="h-4" />
           </div>
         </div>
-        <div className="bg-gradient-to-br from-red-300/25 via-red-500/20 to-slate-900/45 border border-red-300/30 rounded-xl p-4 shadow-lg">
+        <div className="bg-gradient-to-br from-red-300/25 via-red-500/20 to-slate-900/45 border border-red-300/30 rounded-xl p-3 shadow-lg">
           <div className="flex flex-col h-full">
             <div className="flex items-start justify-between">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Encargos Sociais</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Aux. Alimentacao</p>
               <div className="-mt-1">
                 <Factory className="w-5 h-5 text-red-300" />
               </div>
@@ -613,89 +891,47 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
                 {isLoadingCosts ? '...' : formatCurrency(costIndicators.inssEmpresaCost + costIndicators.fgtsEmpresaCost)}
               </p>
             </div>
-            <div className="h-4" />
           </div>
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
-          <div className="flex items-center justify-between text-white mb-3">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Custo por Tipo de Evento</p>
-            </div>
-            <span className="text-emerald-300 text-xs font-semibold">{formatCurrency(costIndicators.totalCost)}</span>
-          </div>
-          {isLoadingCosts ? (
-            <div className="h-64 flex items-center justify-center text-white/50 text-sm">Carregando...</div>
-          ) : costByTypeChartData.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
-          ) : (
-            <div className="relative mt-4 h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={costByTypeChartData} margin={{ top: 12, right: 16, left: 0, bottom: 12 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
-                  <XAxis
-                    dataKey="label"
-                    interval={0}
-                    height={80}
-                    tick={<SectorTick />}
-                    axisLine={{ stroke: '#475569' }}
-                  />
-                  <YAxis
-                    tickFormatter={(tick) => formatCurrency(Number(tick))}
-                    tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
-                    axisLine={{ stroke: '#475569' }}
-                  />
-                  <RechartsTooltip content={countTooltip} cursor={{ fill: 'transparent' }} />
-                  <Bar dataKey="value" radius={[8, 8, 0, 0]}>
-                    {costByTypeChartData.map((entry) => (
-                      <Cell key={entry.label} fill={entry.color} />
-                    ))}
-                    <LabelList
-                      dataKey="value"
-                      position="top"
-                      formatter={formatCurrencyForLabelList}
-                      fill="#FFFFFF"
-                      fontSize={12}
-                     
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
+      <div className="space-y-4">
         <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
           <div className="flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">Custo por Setor</p>
-            <span className="text-emerald-300 text-xs font-semibold">{formatCurrency(costIndicators.totalCost)}</span>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+              Horas Extras por {monthFilter === '' ? 'Mês' : 'Setor'}
+              {titleSuffix}
+            </p>
+            <span className="text-emerald-300 text-xs font-semibold">
+              {formatCurrency(extraChartData.reduce((sum, item) => sum + item.totalValue, 0))}
+            </span>
           </div>
-          {isLoadingCosts ? (
-            <div className="h-64 flex items-center justify-center text-white/50 text-sm">Carregando...</div>
-          ) : costBySectorChartData.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
-          ) : (
-            <div className="mt-3 h-64 rounded-lg border border-white/10 bg-white/5 chart-container">
+          <div className="mt-3 h-80 rounded-lg border border-white/10 bg-white/5 chart-container">
+            {isLoadingCosts ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+            ) : extraChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+            ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={costBySectorChartData} margin={{ top: 12, right: 16, left: 0, bottom: 12 }}>
+                <BarChart data={extraChartData} margin={{ top: 12, right: 16, left: 0, bottom: 12 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
                   <XAxis
                     dataKey="label"
                     interval={0}
-                    height={80}
-                    tick={<SectorTick />}
+                    height={monthFilter === '' ? 30 : 80}
+                    tick={monthFilter === '' ? { fill: '#9aa4b3ff', fontSize: 11 } : <SectorTick />}
                     axisLine={{ stroke: '#475569' }}
                   />
                   <YAxis
                     tickFormatter={(tick) => formatCurrency(Number(tick))}
                     tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
                     axisLine={{ stroke: '#475569' }}
+                    tickCount={8}
+                    domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.2)]}
                   />
                   <RechartsTooltip content={countTooltip} cursor={{ fill: 'transparent' }} />
-                  <Bar dataKey="totalValue" radius={[8, 8, 0, 0]}>
-                    {costBySectorChartData.map((entry) => (
+                  <Bar dataKey="totalValue" radius={[8, 8, 0, 0]} isAnimationActive={false} animationDuration={0}>
+                    {extraChartData.map((entry) => (
                       <Cell key={entry.label} fill={entry.color} />
                     ))}
                     <LabelList
@@ -704,13 +940,442 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
                       formatter={formatCurrencyForLabelList}
                       fill="#FFFFFF"
                       fontSize={12}
-                     
                     />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+
+        <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+              Referências de Horas Extras por {monthFilter === '' ? 'Mês' : 'Setor'}
+              {titleSuffix}
+            </p>
+            <span className="text-emerald-300 text-xs font-semibold">
+              {formatNumber(extraReferenceChartData.reduce((sum, item) => sum + item.totalValue, 0))}
+            </span>
+          </div>
+          <div className="mt-3 h-80 rounded-lg border border-white/10 bg-white/5 chart-container">
+            {isLoadingCosts ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+            ) : extraReferenceChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={extraReferenceChartData} margin={{ top: 12, right: 16, left: 0, bottom: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    height={monthFilter === '' ? 30 : 80}
+                    tick={monthFilter === '' ? { fill: '#9aa4b3ff', fontSize: 11 } : <SectorTick />}
+                    axisLine={{ stroke: '#475569' }}
+                  />
+                  <YAxis
+                    tickFormatter={(tick) => formatNumber(Number(tick))}
+                    tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
+                    axisLine={{ stroke: '#475569' }}
+                    tickCount={8}
+                  />
+                  <RechartsTooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload || payload.length === 0) return null
+                      const data = payload[0]?.payload as { label?: string; totalValue?: number; color?: string }
+                      if (!data) return null
+                      return (
+                        <div className="rounded-lg border border-blue-500/60 bg-[#0f172a] px-3 py-2 text-xs text-white shadow-lg text-center">
+                          <div className="font-semibold flex items-center justify-center gap-2">
+                            <span style={{ backgroundColor: data.color }} className="h-2 w-2 rounded-full" />
+                            <div>{data?.label}</div>
+                          </div>
+                          <div className="mt-1 text-purple-300">{formatNumber(Number(data?.totalValue ?? 0))}</div>
+                        </div>
+                      )
+                    }}
+                    cursor={{ fill: 'transparent' }}
+                  />
+                  <Bar dataKey="totalValue" radius={[8, 8, 0, 0]} isAnimationActive={false} animationDuration={0}>
+                    {extraReferenceChartData.map((entry) => (
+                      <Cell key={entry.label} fill={entry.color} />
+                    ))}
+                    <LabelList
+                      dataKey="totalValue"
+                      position="top"
+                      formatter={formatNumberForLabelList}
+                      fill="#FFFFFF"
+                      fontSize={12}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+              Horas Extras 60% x 100% por {monthFilter === '' ? 'Mês' : 'Setor'}
+              {titleSuffix}
+            </p>
+            <div className="flex items-center gap-4 text-xs font-semibold">
+              <span className="flex items-center gap-1 text-emerald-300">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                60%: {formatCurrency(extraSpeedChartData.reduce((sum, item) => sum + item.total60, 0))}
+              </span>
+              <span className="flex items-center gap-1 text-purple-300">
+                <span className="h-2 w-2 rounded-full bg-purple-500" />
+                100%: {formatCurrency(extraSpeedChartData.reduce((sum, item) => sum + item.total100, 0))}
+              </span>
             </div>
-          )}
+          </div>
+          <div className="mt-3 h-80 rounded-lg border border-white/10 bg-white/5 chart-container">
+            {isLoadingCosts ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+            ) : extraSpeedChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={extraSpeedChartData} margin={{ top: 12, right: 24, left: 0, bottom: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    height={monthFilter === '' ? 30 : 80}
+                    tick={monthFilter === '' ? { fill: '#9aa4b3ff', fontSize: 11 } : <SectorTick />}
+                    axisLine={{ stroke: '#475569' }}
+                  />
+                  <YAxis
+                    tickFormatter={(tick) => formatCurrency(Number(tick))}
+                    tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
+                    axisLine={{ stroke: '#475569' }}
+                    tickCount={8}
+                    domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.2)]}
+                  />
+                  <RechartsTooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload || payload.length === 0) return null
+                      const data = payload[0]?.payload as { label?: string; total60?: number; total100?: number }
+                      if (!data) return null
+                      return (
+                        <div className="rounded-lg border border-blue-500/60 bg-[#0f172a] px-3 py-2 text-xs text-white shadow-lg text-center">
+                          <div className="font-semibold">{data.label}</div>
+                          <div className="mt-1 flex flex-col gap-1 text-left">
+                            <span className="flex items-center gap-2 text-emerald-300">
+                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                              60%: {formatCurrency(Number(data.total60 ?? 0))}
+                            </span>
+                            <span className="flex items-center gap-2 text-purple-300">
+                              <span className="h-2 w-2 rounded-full bg-purple-500" />
+                              100%: {formatCurrency(Number(data.total100 ?? 0))}
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    }}
+                    cursor={{ fill: 'transparent' }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="total60"
+                    stroke="#22c55e"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="total100"
+                    stroke="#a855f7"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+              Referências 60% x 100% por {monthFilter === '' ? 'Mês' : 'Setor'}
+              {titleSuffix}
+            </p>
+            <div className="flex items-center gap-4 text-xs font-semibold">
+              <span className="flex items-center gap-1 text-emerald-300">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                60%: {formatNumber(extraReferenceSplitChartData.reduce((sum, item) => sum + item.ref60, 0))}
+              </span>
+              <span className="flex items-center gap-1 text-purple-300">
+                <span className="h-2 w-2 rounded-full bg-purple-500" />
+                100%: {formatNumber(extraReferenceSplitChartData.reduce((sum, item) => sum + item.ref100, 0))}
+              </span>
+            </div>
+          </div>
+          <div className="mt-3 h-80 rounded-lg border border-white/10 bg-white/5 chart-container">
+            {isLoadingCosts ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+            ) : extraReferenceSplitChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={extraReferenceSplitChartData} margin={{ top: 12, right: 24, left: 0, bottom: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    height={monthFilter === '' ? 30 : 80}
+                    tick={monthFilter === '' ? { fill: '#9aa4b3ff', fontSize: 11 } : <SectorTick />}
+                    axisLine={{ stroke: '#475569' }}
+                  />
+                  <YAxis
+                    tickFormatter={(tick) => formatNumber(Number(tick))}
+                    tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
+                    axisLine={{ stroke: '#475569' }}
+                    tickCount={8}
+                  />
+                  <RechartsTooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload || payload.length === 0) return null
+                      const data = payload[0]?.payload as { label?: string; ref60?: number; ref100?: number }
+                      if (!data) return null
+                      return (
+                        <div className="rounded-lg border border-blue-500/60 bg-[#0f172a] px-3 py-2 text-xs text-white shadow-lg text-center">
+                          <div className="font-semibold">{data.label}</div>
+                          <div className="mt-1 flex flex-col gap-1 text-left">
+                            <span className="flex items-center gap-2 text-emerald-300">
+                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                              60%: {formatNumber(Number(data.ref60 ?? 0))}
+                            </span>
+                            <span className="flex items-center gap-2 text-purple-300">
+                              <span className="h-2 w-2 rounded-full bg-purple-500" />
+                              100%: {formatNumber(Number(data.ref100 ?? 0))}
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    }}
+                    cursor={{ fill: 'transparent' }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ref60"
+                    stroke="#22c55e"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="ref100"
+                    stroke="#a855f7"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+                Top 10 Colaborador Valor{titleSuffix}
+              </p>
+              <span className="text-emerald-300 text-xs font-semibold">
+                {formatCurrency(topValueChartData.reduce((sum, item) => sum + item.totalValue, 0))}
+              </span>
+            </div>
+            <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-3 space-y-3">
+              {isLoadingCosts ? (
+                <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+              ) : topValueChartData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+              ) : (
+                topValueChartData.map((item) => {
+                  const totalSum = topValueChartData.reduce((sum, row) => sum + row.totalRef, 0)
+                  const percent = totalSum > 0 ? (item.totalRef / totalSum) * 100 : 0
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-md hover:bg-white/10 transition"
+                      title={`Setor: ${item.sector ?? 'Sem setor'}`}
+                    >
+                      <div className="flex items-center justify-between text-xs text-white/80">
+                        <span className="font-semibold">{item.label}</span>
+                        <div className="flex items-center gap-3">
+                          <span>{percent.toFixed(1)}%</span>
+                          <span className="text-emerald-300 font-semibold">{formatCurrency(item.totalValue)}</span>
+                        </div>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${percent}%`, background: item.color }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+                Top 10 Colaborador Referência{titleSuffix}
+              </p>
+              <span className="text-emerald-300 text-xs font-semibold">
+                {formatNumber(topReferenceChartData.reduce((sum, item) => sum + item.totalRef, 0))}
+              </span>
+            </div>
+            <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-3 space-y-3">
+              {isLoadingCosts ? (
+                <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+              ) : topReferenceChartData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+              ) : (
+                topReferenceChartData.map((item) => {
+                  const totalSum = topReferenceChartData.reduce((sum, row) => sum + row.totalRef, 0)
+                  const percent = totalSum > 0 ? (item.totalRef / totalSum) * 100 : 0
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-md hover:bg-white/10 transition"
+                      title={`Setor: ${item.sector ?? 'Sem setor'}`}
+                    >
+                      <div className="flex items-center justify-between text-xs text-white/80">
+                        <span className="font-semibold">{item.label}</span>
+                        <div className="flex items-center gap-3">
+                          <span>{percent.toFixed(1)}%</span>
+                          <span className="text-emerald-300 font-semibold">{formatNumber(item.totalRef)}</span>
+                        </div>
+                      </div>
+                      <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${percent}%`, background: item.color }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
+
+
+        <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+              DSR s/ Horas Extras por {monthFilter === '' ? 'Mês' : 'Setor'}
+              {titleSuffix}
+            </p>
+            <span className="text-emerald-300 text-xs font-semibold">
+              {formatCurrency(dsrChartData.reduce((sum, item) => sum + item.totalValue, 0))}
+            </span>
+          </div>
+          <div className="mt-3 h-80 rounded-lg border border-white/10 bg-white/5 chart-container">
+            {isLoadingCosts ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+            ) : dsrChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dsrChartData} margin={{ top: 12, right: 16, left: 0, bottom: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    height={monthFilter === '' ? 30 : 80}
+                    tick={monthFilter === '' ? { fill: '#9aa4b3ff', fontSize: 11 } : <SectorTick />}
+                    axisLine={{ stroke: '#475569' }}
+                  />
+                  <YAxis
+                    tickFormatter={(tick) => formatCurrency(Number(tick))}
+                    tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
+                    axisLine={{ stroke: '#475569' }}
+                    tickCount={8}
+                  />
+                  <RechartsTooltip content={countTooltip} cursor={{ fill: 'transparent' }} />
+                  <Bar dataKey="totalValue" radius={[8, 8, 0, 0]} isAnimationActive={false} animationDuration={0}>
+                    {dsrChartData.map((entry) => (
+                      <Cell key={entry.label} fill={entry.color} />
+                    ))}
+                    <LabelList
+                      dataKey="totalValue"
+                      position="top"
+                      formatter={formatCurrencyForLabelList}
+                      fill="#FFFFFF"
+                      fontSize={12}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+              Atestados por {monthFilter === '' ? 'Mês' : 'Setor'}
+              {titleSuffix}
+            </p>
+            <span className="text-emerald-300 text-xs font-semibold">
+              {formatCurrency(atestadosChartData.reduce((sum, item) => sum + item.totalValue, 0))}
+            </span>
+          </div>
+          <div className="mt-3 h-64 rounded-lg border border-white/10 bg-white/5 chart-container">
+            {isLoadingCosts ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+            ) : atestadosChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={atestadosChartData} margin={{ top: 12, right: 16, left: 0, bottom: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    height={monthFilter === '' ? 30 : 80}
+                    tick={monthFilter === '' ? { fill: '#9aa4b3ff', fontSize: 11 } : <SectorTick />}
+                    axisLine={{ stroke: '#475569' }}
+                  />
+                  <YAxis
+                    tickFormatter={(tick) => formatCurrency(Number(tick))}
+                    tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
+                    axisLine={{ stroke: '#475569' }}
+                    tickCount={8}
+                  />
+                  <RechartsTooltip content={countTooltip} cursor={{ fill: 'transparent' }} />
+                  <Bar dataKey="totalValue" radius={[8, 8, 0, 0]} isAnimationActive={false} animationDuration={0}>
+                    {atestadosChartData.map((entry) => (
+                      <Cell key={entry.label} fill={entry.color} />
+                    ))}
+                    <LabelList
+                      dataKey="totalValue"
+                      position="top"
+                      formatter={formatCurrencyForLabelList}
+                      fill="#FFFFFF"
+                      fontSize={12}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
         </div>
       </div>
     </div>
