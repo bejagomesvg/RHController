@@ -7,10 +7,10 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { validateEmployeeSheet, validateEmployeeRow, REQUIRED_FIELDS, formatDate } from '../utils/employeeParser'
+import { REQUIRED_FIELDS, formatDate } from '../utils/employeeParser'
 import { insertEmployees, fetchEmployeeRegistrations } from '../services/employeeService'
-import { checkPayrollMonthExists, insertPayroll } from '../services/payrollService'
-import { insertOvertime, checkOvertimeDatesExist } from '../services/overtimeService'
+import { insertPayroll } from '../services/payrollService'
+import { insertOvertime } from '../services/overtimeService'
 import type { HistoryEntry } from '../models/history'
 import { fetchHistory, insertHistory } from '../services/logService'
 import { transformOvertimeApuracao, type OvertimeTransformResult } from '../utils/overtimeTransformer'
@@ -20,6 +20,9 @@ import HistoryTable from '../components/HistoryTable'
 import DataPreview from '../components/DataPreview'
 import PayrollConflictModal from '../components/PayrollConflictModal'
 import OvertimeConflictModal from '../components/OvertimeConflictModal'
+import { validateCadastroSheet } from './table_load/importCadastro'
+import { validateFolhaSheet } from './table_load/importFolha'
+import { validateOvertimeSheet } from './table_load/importOvertime'
 export interface RowError {
   rowIndex: number
   errors: string[]
@@ -53,6 +56,7 @@ export interface State {
   overtimePassword: string
   overtimePasswordError: 'required' | 'invalid' | null
   overtimePasswordAttempts: number
+  previewMeta: string
 }
 
 export type Action =
@@ -61,12 +65,13 @@ export type Action =
   | { type: 'RESET_FORM' }
   | { type: 'RESET_FILE_INPUT' }
   | { type: 'SET_SHEET_DATA'; payload: SheetData }
+  | { type: 'SET_PREVIEW_META'; payload: string }
   | { type: 'PUSH_MESSAGE'; payload: string }
   | { type: 'SET_STATUS'; payload: ImportStatus }
   | { type: 'SET_PROGRESS'; payload: number }
   | { type: 'SET_PREVIEW'; payload: boolean }
   | { type: 'VALIDATION_ERROR'; payload: { messages: string[]; headers?: string[] } }
-  | { type: 'FILE_READ_SUCCESS'; payload: { data: SheetData; columns: string[]; messages: string[]; rowErrors?: RowError[] } }
+  | { type: 'FILE_READ_SUCCESS'; payload: { data: SheetData; columns: string[]; messages: string[]; rowErrors?: RowError[]; meta?: string } }
   | { type: 'SET_PAYROLL_CONFLICT'; payload: { ref: string; date: string } }
   | { type: 'UPDATE_PAYROLL_PASSWORD'; payload: string }
   | { type: 'SET_PAYROLL_PASSWORD_ERROR'; payload: 'required' | 'invalid' | null }
@@ -88,6 +93,7 @@ const initialState: State = {
   payrollConflictRef: null, payrollConflictPassword: '', payrollPasswordErrorType: null,
   payrollPasswordAttempts: 0, payrollConflictDate: null, payrollDeletedSuccessfully: false,
   overtimeConflictRef: null, overtimeConflictDate: null, overtimePassword: '', overtimePasswordError: null, overtimePasswordAttempts: 0,
+  previewMeta: '',
 }
 
 interface TableLoadProps {
@@ -103,11 +109,36 @@ const tableLoadReducer = (state: State, action: Action): State => {
     case 'SET_SHEET_TYPE':
       return { ...initialState, sheetType: action.payload, messages: [] }
     case 'SELECT_FILE':
-      return { ...state, selectedFile: action.payload, progress: 0, status: 'idle', messages: [], sheetData: [], columns: [], importFinished: false, showPreview: false }
+      return {
+        ...state,
+        selectedFile: action.payload,
+        progress: 0,
+        status: 'idle',
+        // preserva mensagens anteriores para não apagar log do painel
+        sheetData: [],
+        columns: [],
+        importFinished: false,
+        showPreview: false,
+        previewMeta: '',
+        payrollConflictPassword: '',
+        payrollPasswordAttempts: 0,
+        payrollPasswordErrorType: null,
+      }
     case 'RESET_FORM':
       return { ...initialState, messages: [] }
     case 'RESET_FILE_INPUT':
-      return { ...state, selectedFile: null, sheetData: [], columns: [], status: 'idle', progress: 0 }
+      return {
+        ...state,
+        selectedFile: null,
+        sheetData: [],
+        columns: [],
+        status: 'idle',
+        progress: 0,
+        // mantém histórico de mensagens
+        payrollConflictPassword: '',
+        payrollPasswordAttempts: 0,
+        payrollPasswordErrorType: null,
+      }
     case 'SET_SHEET_DATA':
       return { ...state, sheetData: action.payload }
     case 'PUSH_MESSAGE':
@@ -128,10 +159,20 @@ const tableLoadReducer = (state: State, action: Action): State => {
         rowErrors: action.payload.rowErrors || [],
         sheetHeaderError: [],
         showPreview: state.showPreview,
+        previewMeta: action.payload.meta ?? state.previewMeta,
         messages: [...action.payload.messages, ...state.messages].slice(0, 6),
       }
     case 'SET_PAYROLL_CONFLICT':
-      return { ...state, payrollConflictRef: action.payload.ref, payrollConflictDate: action.payload.date, status: 'idle', importFinished: false }
+      return {
+        ...state,
+        payrollConflictRef: action.payload.ref,
+        payrollConflictDate: action.payload.date,
+        payrollConflictPassword: '',
+        payrollPasswordAttempts: 0,
+        payrollPasswordErrorType: null,
+        status: 'idle',
+        importFinished: false,
+      }
     case 'UPDATE_PAYROLL_PASSWORD':
       return { ...state, payrollConflictPassword: action.payload, payrollPasswordErrorType: null }
     case 'SET_PAYROLL_PASSWORD_ERROR':
@@ -143,7 +184,19 @@ const tableLoadReducer = (state: State, action: Action): State => {
     case 'PAYROLL_DELETE_SUCCESS':
       return { ...state, status: 'done', payrollDeletedSuccessfully: true, importFinished: false, payrollConflictRef: null, payrollConflictDate: null, payrollConflictPassword: '', payrollPasswordAttempts: 0, payrollPasswordErrorType: null }
     case 'IMPORT_SUCCESS':
-      return { ...state, status: 'done', progress: 100, importFinished: true, messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
+      return {
+        ...state,
+        status: 'done',
+        progress: 100,
+        importFinished: true,
+        showPreview: false,
+        sheetData: [],
+        columns: [],
+        previewMeta: '',
+        messages: [...action.payload.messages, ...state.messages].slice(0, 6),
+      }
+    case 'SET_PREVIEW_META':
+      return { ...state, previewMeta: action.payload }
     case 'IMPORT_FAILURE':
       return { ...state, status: 'error', importFinished: false, messages: [...action.payload.messages, ...state.messages].slice(0, 6) }
     case 'SET_OVERTIME_CONFLICT':
@@ -262,16 +315,6 @@ const formatDateFromDb = (value?: string | null) => {
   )}`
 }
 
-const convertExcelDate = (serial: number): string => {
-  if (typeof serial !== 'number' || serial <= 0) return String(serial);
-  // Excel's epoch starts on 1899-12-30 due to a leap year bug with 1900.
-  // We subtract 1 because Excel's day 1 is Jan 1, 1900.
-  const excelEpoch = new Date(1899, 11, 30);
-  const date = new Date(excelEpoch.getTime() + serial * 24 * 60 * 60 * 1000);
-  if (Number.isNaN(date.getTime())) return String(serial);
-  return `${padNumber(date.getUTCDate())}/${padNumber(date.getUTCMonth() + 1)}/${date.getUTCFullYear()}`;
-}
-
 const formatTimePreview = (val: any): string => {
   if (val === null || val === undefined || val === '') return '-'
 
@@ -314,7 +357,9 @@ const TableLoad: React.FC<TableLoadProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const supportedSheets = ['CADASTRO', 'FOLHA PGTO', 'HORAS EXTRAS'] as const
-  const requiredFolhaHeaders = ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor']
+  const requiredFolhaHeaders = ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor', 'company']
+  // Modelo de download pode oferecer campos adicionais sem impactar a validacao obrigatoria
+  const folhaTemplateHeaders = [...requiredFolhaHeaders, 'Empresa']
   const requiredOvertimeHeaders = ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512']
   const ITEMS_PER_PAGE = 10
 
@@ -337,6 +382,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     direction: 'ascending' | 'descending'
   } | null>({ key: 'date', direction: 'descending' })
   const previewRef = useRef<HTMLDivElement | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
   const supabaseKey = import.meta.env.VITE_SUPABASE_KEY
@@ -408,9 +454,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
 
   const pushMessage = React.useCallback((message: string) => {
     dispatch({ type: 'PUSH_MESSAGE', payload: message })
-    if (message.startsWith('XxX')) {
-      dispatch({ type: 'SET_SHEET_TYPE', payload: '' })
-    }
   }, [dispatch])
 
   const handleSort = (key: string) => {
@@ -433,6 +476,19 @@ const TableLoad: React.FC<TableLoadProps> = ({
     dispatch({ type: 'SET_SHEET_DATA', payload: filtered })
     pushMessage(`Linha ${index + 1} removida do preview.`)
   }, [sheetData, pushMessage])
+
+  const handleTogglePreview = React.useCallback(() => {
+    // Start spinner immediately when opening; clear when closing
+    if (!showPreview) {
+      setPreviewLoading(true)
+    } else {
+      setPreviewLoading(false)
+    }
+    // Defer the heavy toggle to next frame so the spinner paints first
+    window.requestAnimationFrame(() => {
+      dispatch({ type: 'SET_PREVIEW', payload: !showPreview })
+    })
+  }, [dispatch, showPreview])
 
   const getEmployeeRegistrationsCached = React.useCallback(async () => {
     if (employeeRegsCache.current) {
@@ -505,6 +561,12 @@ const TableLoad: React.FC<TableLoadProps> = ({
     if (showPreview && (sheetData.length > 0 || columns.length > 0)) {
       previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
+    if (showPreview && (sheetData.length > 0 || columns.length > 0)) {
+      setPreviewLoading(false)
+    }
+    if (!showPreview) {
+      setPreviewLoading(false)
+    }
   }, [showPreview, sheetData, columns])
 
   const handleFileSelect = async (file: File | null) => {
@@ -563,6 +625,12 @@ const TableLoad: React.FC<TableLoadProps> = ({
         try {
           const transformed = transformPayrollSheet(sharedBuffer)
           payrollTransformed = transformed
+          const companyCode = typeof transformed.company === 'number' ? transformed.company : null
+          const companyNameFirst = transformed.companyName ? transformed.companyName.split(/\s+/)[0] : ''
+          const metaLabel =
+            transformed.companyLabel ||
+            (companyCode !== null ? `${String(companyCode).padStart(4, '0')}${companyNameFirst ? ` - ${companyNameFirst}` : ''}` : '')
+          if (metaLabel) dispatch({ type: 'SET_PREVIEW_META', payload: metaLabel })
           if (transformed.rows.length === 0) {
             pushMessage('XxX Transformacao da folha retornou 0 linhas.')
           } else {
@@ -571,8 +639,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
                 ? transformed.competence.trim()
                 : getRefMonthYear(transformed.competence) || transformed.competence)
               : ''
-            const suffix = competenceDisplay ? ` Comp.: ${competenceDisplay}` : ''
-            pushMessage(`OoO Transformacao da folha pronta (${transformed.rows.length} linha(s)).${suffix}`)
+            pushMessage(`OoO Transformacao da folha pronta (${transformed.rows.length} linha(s)).`)
           }
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : 'Falha ao transformar folha.'
@@ -591,311 +658,6 @@ const TableLoad: React.FC<TableLoadProps> = ({
     const missing = missingFields.join(', ')
     dispatch({ type: 'VALIDATION_ERROR', payload: { messages: [`XxX Campos obrigatorios faltando: (${missing})`], headers: missingFields } })
   }, [dispatch])
-
-  // Helper function to validate 'CADASTRO' sheets
-  const validateCadastroSheet = React.useCallback((jsonData: SheetData, cols: string[], pushMessage: (msg: string) => void) => {
-    const normalizeHeader = (h: string) => h.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
-
-    // Mapa de nomes canônicos (sem acento) para os nomes esperados
-    const canonicalMap = new Map<string, string>()
-    REQUIRED_FIELDS.forEach((field) => {
-      canonicalMap.set(normalizeHeader(field), field)
-    })
-
-    // Constrói colunas canônicas encontradas na planilha (mesmo que venham com acentos)
-    const canonicalCols = new Set<string>()
-    cols.forEach((c) => {
-      const canon = canonicalMap.get(normalizeHeader(c))
-      if (canon) canonicalCols.add(canon)
-    })
-
-    // Normaliza linhas copiando valores para as chaves canônicas quando existirem
-    const normalizedData = jsonData.map((row) => {
-      const newRow: Record<string, any> = { ...row }
-      Object.keys(row).forEach((key) => {
-        const canon = canonicalMap.get(normalizeHeader(key))
-        if (canon && !(canon in newRow)) {
-          newRow[canon] = row[key]
-        }
-      })
-      return newRow
-    })
-
-    const headerValidation = validateEmployeeSheet(Array.from(canonicalCols))
-    if (!headerValidation.valid) {
-      dispatchHeaderError(headerValidation.missingFields)
-      return { ok: false }
-    }
-    pushMessage(`OoO Headers validados: ${canonicalCols.size} coluna(s)`)
-    const rowErrors: RowError[] = []
-    normalizedData.forEach((row, index) => {
-      const validation = validateEmployeeRow(row)
-      if (!validation.valid) {
-        rowErrors.push({ rowIndex: index + 2, errors: validation.errors })
-      }
-    })
-
-    if (rowErrors.length > 0) {
-      const errorFields = new Set<string>()
-      rowErrors.forEach((rowErr) => {
-        rowErr.errors.forEach((msg) => {
-          const field = extractFieldFromError(msg)
-          if (field) errorFields.add(field)
-        })
-      })
-      const fieldsText = Array.from(errorFields).join(', ')
-
-      // lista de cadastros das linhas com advertência
-      const erroredIndices = new Set(rowErrors.map((r) => r.rowIndex - 2)) // zero-based
-      const cadastroList = normalizedData
-        .map((row, idx) => (erroredIndices.has(idx) ? String(row['Cadastro'] ?? '').trim() : ''))
-        .filter((cad) => cad.length > 0)
-        .join(', ')
-
-      const fieldPart = fieldsText ? `(${fieldsText})` : ''
-      const cadastroPart = cadastroList ? ` (${cadastroList})` : ''
-      pushMessage(`:) ${rowErrors.length} linha(s) com ${fieldPart} corrigida(s)${cadastroPart}.`)
-    } else {
-      pushMessage(`OoO Todas as ${normalizedData.length} linhas validadas com sucesso`)
-    }
-
-    // Convert date fields from Excel serial number to readable format
-    const formattedData = normalizedData.map((row) => ({
-      ...row,
-      // Usa os nomes canônicos (Nascimento/Admissao/Data Afastamento) para que o preview
-      // mostre o mesmo que será persistido.
-      Nascimento: row['Nascimento'] ? convertExcelDate(row['Nascimento'] as number) : row['Nascimento'],
-      Admissao: row['Admissao'] ? convertExcelDate(row['Admissao'] as number) : row['Admissao'],
-      'Data Afastamento': row['Data Afastamento']
-        ? convertExcelDate(row['Data Afastamento'] as number)
-        : row['Data Afastamento'],
-    }))
-
-    const displayColumns = REQUIRED_FIELDS.filter((field) => canonicalCols.has(field))
-    dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: formattedData, columns: displayColumns, messages: [], rowErrors } })
-    return { ok: true }
-  }, [dispatch, dispatchHeaderError])
-
-  // Helper function to validate 'FOLHA PGTO' sheets
-  const validateFolhaSheet = React.useCallback(async (jsonData: SheetData, cols: string[], pushMessage: (msg: string) => void) => {
-    const normalizeHeader = (h: string) =>
-      h
-        .normalize('NFD')
-        .replace(/\p{Diacritic}/gu, '')
-        .replace(/[^\p{L}\p{N}]/gu, '')
-        .toLowerCase()
-
-    const canonicalMap = new Map<string, string>([
-      ['cadastro', 'cadastro'],
-      ['colaborador', 'Colaborador'],
-      ['nome', 'Colaborador'],
-      ['evento', 'Evento'],
-      ['competencia', 'Competencia'],
-      ['referencia', 'Referencia'],
-      ['valor', 'valor'],
-    ])
-
-    const canonicalCols = new Set<string>()
-    cols.forEach((c) => {
-      const canon = canonicalMap.get(normalizeHeader(c))
-      if (canon) canonicalCols.add(canon)
-    })
-
-    const missingFolha = requiredFolhaHeaders.filter((h) => !canonicalCols.has(h))
-    if (missingFolha.length > 0) {
-      dispatchHeaderError(missingFolha)
-      return { ok: false }
-    }
-    pushMessage(`OoO Headers validados: ${canonicalCols.size} coluna(s)`)
-
-    // 1. Validate Employee Registrations
-    const regNumbers = extractRegistrationNumbers(jsonData)
-    const employeeRegsResult = await getEmployeeRegistrationsCached()
-    if (!employeeRegsResult.ok) {
-      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: ['XxX Erro ao validar colaboradores.'] } })
-      return { ok: false }
-    }
-    const { registrations } = employeeRegsResult
-    const missingRegs = regNumbers.filter((r) => !registrations.has(r))
-    if (missingRegs.length > 0) {
-      dispatch({ type: 'VALIDATION_ERROR', payload: { messages: [`XxX Colaboradores nao encontrado: (${missingRegs.join(', ')})`] } })
-      return { ok: false }
-    }
-
-    // 2. Check for existing payroll month
-    const competenceKey = cols.find((c) => {
-      const canon = normalizeHeader(c)
-      return canon === 'competencia' || canon === 'pagamento'
-    }) || 'Competencia'
-    const competenceValue = jsonData[0]?.[competenceKey]
-    const refMonth = getRefMonthYear(competenceValue) || '-'
-    const payrollCheck = await checkPayrollMonthExists(competenceValue, supabaseUrl, supabaseKey)
-    if (!payrollCheck.ok) {
-      const detail = payrollCheck.error ? ` Detalhe: ${payrollCheck.error}` : ''
-      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [`XxX Erro ao verificar folha ref. ${refMonth}.${detail}`] } })
-      return { ok: false }
-    }
-    if (payrollCheck.exists) {
-      pushMessage(`:) Competencia ref. ${refMonth} ja consta em payroll.`)
-      // Use ISO garantido para o delete
-      const iso = formatDate(competenceValue) || String(competenceValue)
-      const dt = new Date(iso)
-      const monthIso = Number.isNaN(dt.getTime())
-        ? iso
-        : `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-01`
-      dispatch({ type: 'SET_PAYROLL_CONFLICT', payload: { ref: refMonth, date: monthIso } })
-      // Do not return `ok: false`. The process is paused, pending user action in the modal.
-      return { ok: true, paused: true } // Return a specific state to prevent further processing
-    }
-
-    // 3. Normalize and format data for preview
-    const folhaOrder = ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor']
-    const ordered = folhaOrder.map((c) => (c === 'Competencia' ? competenceKey : c)).filter((c) => cols.includes(c) || c === 'Competencia')
-    const remaining = cols.filter((c) => !ordered.includes(c))
-    const normalized = jsonData.map((row) => {
-      const cadastroNum = row['cadastro'] ? Number(String(row['cadastro']).replace(/\D/g, '')) : row['cadastro']
-      const eventoNum = row['Evento'] ? Number(String(row['Evento']).replace(/\D/g, '')) : row['Evento']
-      const competenciaVal = row[competenceKey] ?? row['Competencia'] ?? row['competencia']
-      const competenciaFmt = getRefMonthYear(competenciaVal) || competenciaVal
-      let rawValorNum: number | null = null
-      if (typeof row['valor'] === 'number') {
-        rawValorNum = row['valor']
-      } else if (row['valor']) {
-        const cleaned = String(row['valor']).replace(/[^0-9,.-]/g, '').replace(/\./g, '').replace(',', '.')
-        const parsed = Number(cleaned)
-        rawValorNum = Number.isNaN(parsed) ? null : parsed
-      }
-      const valorFormatado = typeof rawValorNum === 'number' ? rawValorNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : row['valor']
-      return {
-        ...row,
-        [competenceKey]: competenciaFmt,
-        Competencia: competenciaFmt,
-        cadastro: cadastroNum,
-        Evento: eventoNum,
-        valor: valorFormatado,
-        _valorRaw: rawValorNum,
-      }
-    })
-
-    dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: normalized, columns: [...ordered, ...remaining], messages: [], rowErrors: [] } })
-    return { ok: true }
-  }, [dispatch, supabaseUrl, supabaseKey])
-
-  const validateOvertimeSheet = React.useCallback(async (jsonData: SheetData, cols: string[], pushMessage: (msg: string) => void, headerDate?: string) => {
-    const normalizeHeader = (h: string) =>
-      h
-        .normalize('NFD')
-        .replace(/\p{Diacritic}/gu, '')
-        .replace(/[^\p{L}\p{N}]/gu, '') // remove tudo que nao for letra/digito (inclui % e espaços/nbsp)
-        .toLowerCase()
-
-    const headerDateIso = headerDate ? formatDate(headerDate) || String(headerDate) : ''
-    const normalizedCols = cols.map((c) => normalizeHeader(c))
-    const hasData = normalizedCols.some((c) => c === 'data')
-    const hasCadastro = normalizedCols.some((c) => c === 'cadastro')
-    const hasNome = normalizedCols.some((c) => c === 'nome')
-    const has303 = normalizedCols.some((c) => c === '303')
-    const has304 = normalizedCols.some((c) => c === '304')
-    const has505 = normalizedCols.some((c) => c === '505')
-    const has506 = normalizedCols.some((c) => c === '506')
-    const has511 = normalizedCols.some((c) => c === '511')
-    const has512 = normalizedCols.some((c) => c === '512')
-
-    const missingOvertime: string[] = []
-    if (!hasData) missingOvertime.push('Data')
-    if (!hasCadastro) missingOvertime.push('Cadastro')
-    if (!hasNome) missingOvertime.push('Nome')
-    if (!has303) missingOvertime.push('303')
-    if (!has304) missingOvertime.push('304')
-    if (!has505) missingOvertime.push('505')
-    if (!has506) missingOvertime.push('506')
-    if (!has511) missingOvertime.push('511')
-    if (!has512) missingOvertime.push('512')
-
-    if (missingOvertime.length > 0) {
-      dispatchHeaderError(missingOvertime)
-      return { ok: false }
-    }
-    pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
-
-    // Validar se as matrículas existem
-    const regNumbers = extractRegistrationNumbers(jsonData)
-    const employeeRegsResult = await getEmployeeRegistrationsCached()
-    if (!employeeRegsResult.ok) {
-      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: ['XxX Erro ao validar colaboradores.'] } })
-      return { ok: false }
-    }
-    const { registrations } = employeeRegsResult
-    const missingRegs = regNumbers.filter((r) => !registrations.has(r))
-    if (missingRegs.length > 0) {
-      dispatch({ type: 'VALIDATION_ERROR', payload: { messages: [`XxX Colaboradores nao encontrado: (${missingRegs.join(', ')})`] } })
-      return { ok: false }
-    }
-
-    // Checa se ja existe horas extras para as datas informadas (usa data completa dd/mm/aaaa)
-    const dateKey = Object.keys(jsonData[0]).find((k) => k.toLowerCase() === 'data') || 'Data'
-    const uniqueDates = new Set<string>()
-    jsonData.forEach((row) => {
-      const iso = formatDate(row[dateKey]) || headerDateIso
-      if (iso) uniqueDates.add(iso)
-    })
-    const firstIso = Array.from(uniqueDates)[0] || ''
-
-    const checkBatch = await checkOvertimeDatesExist(uniqueDates, supabaseUrl, supabaseKey)
-    if (!checkBatch.ok) {
-      const detail = checkBatch.error ? ` Detalhe: ${checkBatch.error}` : ''
-      dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [`XxX Erro ao verificar horas extras. ${detail}`] } })
-      return { ok: false }
-    }
-    if (checkBatch.exists) {
-      const refDate = formatIsoDateDisplay(firstIso || (checkBatch.dates && checkBatch.dates[0]) || '')
-      const detailMsg = refDate ? ` ${refDate}` : ''
-      dispatch({ type: 'SET_OVERTIME_CONFLICT', payload: { ref: detailMsg.trim() || '-', date: firstIso || (checkBatch.dates?.[0] || '') } })
-      return { ok: true, paused: true }
-    }
-
-    const overtimeOrder = ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512']
-    const ordered = overtimeOrder.filter((c) => cols.includes(c))
-    const remaining = cols.filter((c) => !ordered.includes(c))
-
-    const normalized = jsonData.map((row) => {
-      const cadastroKey = Object.keys(row).find((k) => k.toLowerCase() === 'cadastro')
-      const dataKey = Object.keys(row).find((k) => k.toLowerCase() === 'data')
-      const key303 = Object.keys(row).find((k) => normalizeHeader(k) === '303')
-      const key304 = Object.keys(row).find((k) => normalizeHeader(k) === '304')
-      const key505 = Object.keys(row).find((k) => normalizeHeader(k) === '505')
-      const key506 = Object.keys(row).find((k) => normalizeHeader(k) === '506')
-      const key511 = Object.keys(row).find((k) => normalizeHeader(k) === '511')
-      const key512 = Object.keys(row).find((k) => normalizeHeader(k) === '512')
-
-      const cadastroNum = cadastroKey ? Number(String(row[cadastroKey]).replace(/\D/g, '')) : row['Cadastro']
-      const dataIso = formatDate(row[dataKey || 'Data']) || headerDateIso
-      const preview303 = formatTimePreview(key303 ? row[key303] : row['303'])
-      const preview304 = formatTimePreview(key304 ? row[key304] : row['304'])
-      const preview505 = formatTimePreview(key505 ? row[key505] : row['505'])
-      const preview506 = formatTimePreview(key506 ? row[key506] : row['506'])
-      const preview511 = formatTimePreview(key511 ? row[key511] : row['511'])
-      const preview512 = formatTimePreview(key512 ? row[key512] : row['512'])
-
-      return {
-        ...row,
-        Cadastro: cadastroNum,
-        Data: dataIso || row[dataKey || 'Data'] || headerDateIso,
-        '303': preview303,
-        '304': preview304,
-        '505': preview505,
-        '506': preview506,
-        '511': preview511,
-        '512': preview512,
-      }
-    })
-
-    dispatch({
-      type: 'FILE_READ_SUCCESS',
-      payload: { data: normalized, columns: [...ordered, ...remaining], messages: [], rowErrors: [] },
-    })
-    return { ok: true }
-  }, [dispatch, supabaseUrl, supabaseKey])
 
   const readExcelFile = (
     file: File,
@@ -928,6 +690,25 @@ const TableLoad: React.FC<TableLoadProps> = ({
           ? (headerRows[0] || []).map((h: any) => String(h ?? '').trim())
           : Object.keys(jsonData[0] || {})
 
+        const extractCompanyMeta = () => {
+          const rawCode = (firstSheet as any)?.['A1']?.v ?? headerRows?.[0]?.[0]
+          const rawName = (firstSheet as any)?.['C1']?.v ?? headerRows?.[0]?.[2]
+          const codeDigits = rawCode !== undefined && rawCode !== null ? String(rawCode).replace(/\D/g, '') : ''
+          const codeNum = codeDigits ? Number(codeDigits) : null
+          const padded = codeNum !== null && !Number.isNaN(codeNum) ? String(codeNum).padStart(4, '0') : ''
+          const name = rawName !== undefined && rawName !== null ? String(rawName).trim() : ''
+          const firstWord = name ? name.split(/\s+/)[0] : ''
+          if (padded || name) {
+            return `${padded || ''}${firstWord ? ` - ${firstWord}` : ''}`.trim()
+          }
+          return ''
+        }
+
+        const metaFromSheet = extractCompanyMeta()
+        if (metaFromSheet) {
+          dispatch({ type: 'SET_PREVIEW_META', payload: metaFromSheet })
+        }
+
         if (isOvertime && transforms?.overtime?.rows) {
           jsonData = transforms.overtime.rows
           const derivedColumns = transforms.overtime.columns && transforms.overtime.columns.length > 0
@@ -941,6 +722,19 @@ const TableLoad: React.FC<TableLoadProps> = ({
           headers = transforms.payroll.columns && transforms.payroll.columns.length > 0
             ? transforms.payroll.columns
             : (jsonData.length > 0 ? Object.keys(jsonData[0]) : ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor'])
+          // inclui coluna Empresa no preview/validacao e preenche com o codigo detectado
+          if (!headers.includes('Empresa')) {
+            headers = [...headers, 'Empresa']
+          }
+          const companyCode = transforms.payroll.company
+          const empresaVal = typeof companyCode === 'number' ? String(companyCode).padStart(4, '0') : ''
+          if (empresaVal) {
+            jsonData = jsonData.map((row) => ({
+              ...row,
+              company: companyCode ?? row['company'],
+              Empresa: empresaVal,
+            }))
+          }
           if (transforms.payroll.competence) {
             const comp = transforms.payroll.competence
             jsonData = jsonData.map((row) => ({
@@ -957,15 +751,63 @@ const TableLoad: React.FC<TableLoadProps> = ({
         }
 
         const cols = headers
+        const metaLabel =
+          transforms?.payroll?.companyLabel ||
+          (typeof transforms?.payroll?.company === 'number'
+            ? `Emp: ${String(transforms.payroll.company).padStart(4, '0')}`
+            : metaFromSheet || state.previewMeta)
+
+        if (metaLabel) {
+          dispatch({ type: 'SET_PREVIEW_META', payload: metaLabel })
+        }
         let validationResult: { ok: boolean; paused?: boolean }
 
         if (isCadastro) {
-          validationResult = validateCadastroSheet(jsonData, cols, pushMessage)
+          validationResult = validateCadastroSheet(jsonData, cols, pushMessage, dispatch, dispatchHeaderError, extractFieldFromError)
         } else if (isFolha) {
-          validationResult = await validateFolhaSheet(jsonData, cols, pushMessage)
+          const companyMsg = (() => {
+            if (metaLabel && metaLabel.trim()) {
+              return metaLabel.trim()
+            }
+            if (typeof transforms?.payroll?.company === 'number') {
+              const code = String(transforms.payroll.company).padStart(4, '0')
+              const nameFirst = transforms.payroll.companyName ? transforms.payroll.companyName.split(/\s+/)[0] : ''
+              return `${code}${nameFirst ? ` - ${nameFirst}` : ''}`
+            }
+            return ''
+          })()
+          if (companyMsg) pushMessage(`Empresa: ${companyMsg}`)
+          if (transforms?.payroll?.competence || j5DateIso) {
+            const compVal = transforms?.payroll?.competence || j5DateIso
+            const compDisplay = getRefMonthYear(compVal) || String(compVal)
+            pushMessage(`Competencia: ${compDisplay}`)
+          }
+          if (metaLabel) dispatch({ type: 'SET_PREVIEW_META', payload: metaLabel })
+          validationResult = await validateFolhaSheet(
+            jsonData,
+            cols,
+            pushMessage,
+            dispatch,
+            dispatchHeaderError,
+            requiredFolhaHeaders,
+            getEmployeeRegistrationsCached,
+            supabaseUrl,
+            supabaseKey,
+            metaLabel,
+            transforms?.payroll?.company ?? null,
+          )
         } else if (isOvertime) {
           const headerDate = transforms?.overtime?.period || j5DateIso
-          validationResult = await validateOvertimeSheet(jsonData, cols, pushMessage, headerDate)
+          validationResult = await validateOvertimeSheet(
+            jsonData,
+            cols,
+            pushMessage,
+            dispatch,
+            getEmployeeRegistrationsCached,
+            supabaseUrl,
+            supabaseKey,
+            headerDate,
+          )
         } else {
           pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
           dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: jsonData, columns: headers, messages: [] } })
@@ -1056,11 +898,40 @@ const TableLoad: React.FC<TableLoadProps> = ({
           return
         }
         finalMessages.push(`OoO Payroll: ${payrollResult.inserted} linha(s) inseridas.`)
-        const paymentValue = sheetData[0]?.['Competencia']
+        const paymentValue =
+          sheetData[0]?.['Competencia'] ??
+          sheetData[0]?.['competencia'] ??
+          sheetData[0]?.['Competence'] ??
+          sheetData[0]?.['competence']
         const refMonthLog = getRefMonthYear(paymentValue)
+        const companyRaw =
+          sheetData[0]?.['company'] ??
+          sheetData[0]?.['Company'] ??
+          sheetData[0]?.['Empresa'] ??
+          state.previewMeta
+        const companyDigitsMatch = companyRaw ? String(companyRaw).match(/\d{1,}/) : null
+        const companyNum = companyDigitsMatch ? Number(companyDigitsMatch[0]) : null
+        const companyDisplay =
+          companyNum !== null && !Number.isNaN(companyNum) && companyNum > 0
+            ? String(companyNum).padStart(4, '0')
+            : companyRaw
+              ? String(companyRaw).trim()
+              : ''
+        const compDisplay =
+          refMonthLog ||
+          (typeof paymentValue === 'string' && paymentValue.trim() ? paymentValue.trim() : '')
+
+        const payrollTableLabel =
+          companyDisplay && compDisplay
+            ? `payroll ${companyDisplay}-${compDisplay}`
+            : companyDisplay
+              ? `payroll ${companyDisplay}`
+              : compDisplay
+                ? `payroll Ref. ${compDisplay}`
+                : 'payroll'
         await insertHistory(
           {
-            table: refMonthLog ? `payroll Ref. ${refMonthLog}` : 'payroll',
+            table: payrollTableLabel,
             actions: 'Inclusao',
             file: selectedFile?.name || '-',
             user: userName || '-',
@@ -1180,8 +1051,10 @@ const TableLoad: React.FC<TableLoadProps> = ({
           statusLabel={statusLabel}
           getStatusColor={getStatusColor}
           cadastroHeaders={REQUIRED_FIELDS}
-          folhaHeaders={requiredFolhaHeaders}
+          folhaHeaders={folhaTemplateHeaders}
           overtimeHeaders={requiredOvertimeHeaders}
+          previewLoading={previewLoading}
+          onTogglePreview={handleTogglePreview}
         />
         <HistoryTable
           history={paginatedHistory}
@@ -1206,6 +1079,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
           columns={columns}
           isFolha={sheetType === 'FOLHA PGTO'}
           isOvertime={isOvertime}
+          metaTitle={sheetType === 'FOLHA PGTO' ? state.previewMeta || undefined : undefined}
           onUpdateRow={isOvertime || sheetType === 'FOLHA PGTO' ? handleUpdatePreviewRow : undefined}
           onDeleteRow={isOvertime || sheetType === 'FOLHA PGTO' ? handleDeletePreviewRow : undefined}
           rowErrors={rowErrors} />

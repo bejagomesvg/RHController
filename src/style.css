@@ -212,6 +212,13 @@ body {
   background: linear-gradient(180deg, #2563eb 0%, #60a5fa 100%);
 }
 
+.neutralize-autofill:-webkit-autofill,
+.neutralize-autofill:-webkit-autofill:focus {
+  -webkit-text-fill-color: #e5e7eb;
+  transition: background-color 9999s ease-out 0s;
+  box-shadow: 0 0 0px 1000px rgba(255, 255, 255, 0.05) inset;
+}
+
 .chart-container .recharts-bar-rectangle path {
   transition: transform 0.2s ease-in-out;
   transform-origin: bottom;

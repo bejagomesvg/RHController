@@ -1,9 +1,10 @@
 import { formatDate } from '../utils/employeeParser'
 import type { PayrollPayload, PayrollResult, PayrollMonthCheck, PayrollDeleteResult } from '../models/payroll'
 
-const parseNumber = (val: any): number | null => {
-  const num = Number(String(val ?? '').replace(/\D/g, ''))
-  return Number.isNaN(num) ? null : num
+const parseNumber = (val: any): number => {
+  const digits = String(val ?? '').replace(/\D/g, '')
+  const num = Number(digits)
+  return Number.isNaN(num) ? 0 : num
 }
 
 const parseMoney = (val: any): number | null => {
@@ -98,6 +99,7 @@ export const insertPayroll = async (
     references_: parseDecimal(row['Referencia']),
     volue: parseMoney(row['_valorRaw'] ?? row['valor'] ?? row['Valor'] ?? row['VALOR']),
     competence: parseDateIso(row['Competencia']),
+    company: parseNumber(row['company'] ?? row['Company']),
     type_registration: 'Importado',
     user_registration: userName || null,
     date_registration: new Date().toISOString(),
@@ -129,6 +131,7 @@ export const insertPayroll = async (
 
 export const checkPayrollMonthExists = async (
   paymentDate: any,
+  company?: number | null,
   supabaseUrl?: string,
   supabaseKey?: string
 ): Promise<PayrollMonthCheck> => {
@@ -155,6 +158,9 @@ export const checkPayrollMonthExists = async (
     url.searchParams.append('select', 'competence')
     url.searchParams.append('competence', `gte.${monthStart}`)
     url.searchParams.append('competence', `lt.${nextMonth}`)
+    if (company !== null && company !== undefined) {
+      url.searchParams.append('company', `eq.${company}`)
+    }
     url.searchParams.append('limit', '1')
 
     const res = await fetch(url.toString(), {
@@ -172,6 +178,7 @@ export const checkPayrollMonthExists = async (
 
 export const deletePayrollByMonth = async (
   paymentDate: any,
+  company?: number | null,
   supabaseUrl?: string,
   supabaseKey?: string
 ): Promise<PayrollDeleteResult> => {
@@ -193,6 +200,9 @@ export const deletePayrollByMonth = async (
     const url = new URL(`${supabaseUrl}/rest/v1/payroll`)
     url.searchParams.append('competence', `gte.${monthStart}`)
     url.searchParams.append('competence', `lt.${nextMonth}`)
+    if (company !== null && company !== undefined) {
+      url.searchParams.append('company', `eq.${company}`)
+    }
 
     const res = await fetch(url.toString(), {
       method: 'DELETE',

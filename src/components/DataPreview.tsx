@@ -58,6 +58,7 @@ interface DataPreviewProps {
   showFilterInput?: boolean
   onUpdateRow?: (rowIndex: number, updatedRow: Record<string, any>) => void
   onDeleteRow?: (rowIndex: number) => void
+  metaTitle?: string
 }
 
 const DataPreview: React.FC<DataPreviewProps> = ({
@@ -74,6 +75,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
   showFilterInput = true,
   onUpdateRow,
   onDeleteRow,
+  metaTitle,
 }) => {
   const [localFilter, setLocalFilter] = useState('')
   const [selectedEvento, setSelectedEvento] = useState('')
@@ -307,6 +309,17 @@ const DataPreview: React.FC<DataPreviewProps> = ({
 
   const normalizeCol = (c: string) => c.trim().toLowerCase()
   const folhaOrder = ['cadastro', 'colaborador', 'competencia', 'pagamento', 'situacao', 'evento', 'referencia', 'valor']
+  const headerLabelMap = useMemo(
+    () =>
+      new Map<string, string>([
+        ['empresa', 'Emp'],
+        ['data afastamento', 'Afastamento'],
+        ['titulo reduzido (cargo)', 'Cargo'],
+        ['descricao do local', 'Setor'],
+        ['valor salario', 'Salario'],
+      ]),
+    [],
+  )
   const columnsToRender = useMemo(() => {
     if (!isFolha) return columns
     const lowerMap = new Map(columns.map((c) => [normalizeCol(c), c]))
@@ -330,7 +343,21 @@ const DataPreview: React.FC<DataPreviewProps> = ({
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
             <p className="text-white font-semibold">
-              {isLoading ? 'Carregando...' : `Dados carregados (${data.length} linha(s))`}
+              {isLoading
+                ? 'Carregando...'
+                : (() => {
+                    if (isFolha) {
+                      const base =
+                        metaTitle && metaTitle.trim().length > 0
+                          ? metaTitle.trim()
+                          : data.length > 0 && data[0]?.company !== undefined && data[0]?.company !== null
+                            ? `${String(Number(data[0].company)).padStart(4, '0')}`
+                            : ''
+                      return base
+                    }
+                    const label = metaTitle && metaTitle.trim().length > 0 ? metaTitle.trim() : 'Dados carregados'
+                    return label
+                  })()}
             </p>
             {isLoading && <LoaderCircle className="w-4 h-4 text-emerald-300 animate-spin" />}
           </div>
@@ -405,6 +432,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
               {columnsToRender.map((col) => {
                 const isSorted = sortConfig?.key === col
                 const direction = sortConfig?.direction
+                const headerLabel = headerLabelMap.get(col.toLowerCase()) || col
                 return (
                   <th key={col} className="px-3 py-2 font-semibold text-white/90 uppercase tracking-wide text-center">
                     <button
@@ -412,7 +440,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
                       onClick={() => handleSort(col)}
                       className="w-full flex items-center justify-center gap-1 hover:text-emerald-200 transition-colors"
                     >
-                      <span>{col}</span>
+                      <span>{headerLabel}</span>
                       {isSorted && (direction === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
                     </button>
                   </th>
@@ -456,7 +484,9 @@ const DataPreview: React.FC<DataPreviewProps> = ({
                     let alignClass = 'text-center'
                     if (colKey === 'nome' || colKey === 'colaborador') {
                       alignClass = 'text-left'
-                    } else if (normalizedKey === 'valorsalario' || normalizedKey === 'referencia' || normalizedKey === 'valor') {
+                    } else if (colKey === 'titulo reduzido (cargo)' || colKey === 'descricao do local') {
+                      alignClass = 'text-left'
+                    } else if (normalizedKey === 'valorsalario' || normalizedKey === 'referencia' || normalizedKey === 'valor' || normalizedKey === 'salario') {
                       alignClass = 'text-right'
                     }
                     const shouldFormatDate = dateColumns.has(colKey)

@@ -11,12 +11,16 @@ export interface PayrollTransformRow {
   Pagamento?: string
   Situacao?: string
   DescricaoEvento?: string
+  company?: number | null
 }
 
 export interface PayrollTransformResult {
   rows: PayrollTransformRow[]
   competence?: string
   columns?: string[]
+  company?: number | null
+  companyLabel?: string
+  companyName?: string
 }
 
 type CanonicalKey = 'cadastro' | 'Colaborador' | 'Evento' | 'Competencia' | 'Referencia' | 'valor'
@@ -356,30 +360,78 @@ const decodeBufferToText = (buffer: ArrayBuffer): string | null => {
   }
 }
 
+const extractCompanyInfo = (firstSheet: XLSX.Sheet, matrix: any[][]) => {
+  const getCell = (address: string) => {
+    const cell: any = (firstSheet as any)?.[address]
+    return cell && 'v' in cell ? cell.v : undefined
+  }
+  const fromMatrix = (r: number, c: number) => {
+    if (!Array.isArray(matrix) || !matrix[r]) return undefined
+    return matrix[r][c]
+  }
+
+  const rawCode = getCell('A1') ?? fromMatrix(0, 0)
+  const rawName = getCell('C1') ?? fromMatrix(0, 2)
+  const codeNum = rawCode !== undefined ? Number(String(rawCode).replace(/\D/g, '')) : null
+  const code = Number.isNaN(codeNum as number) ? 0 : (codeNum as number)
+  const name = rawName !== undefined && rawName !== null ? String(rawName).trim() : ''
+  const firstWord = name ? name.split(/\s+/)[0] : ''
+  const labelBase = `${String(code).padStart(4, '0')}`
+  const label = `${labelBase}${firstWord ? ` - ${firstWord}` : ''}`
+  return { code, name, label, firstWord }
+}
+
 export const transformPayrollSheet = (buffer: ArrayBuffer): PayrollTransformResult => {
+  const workbook = XLSX.read(buffer, { type: 'array' })
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+  const matrix = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: true, defval: '', blankrows: false }) as any[][]
+  const companyInfo = extractCompanyInfo(firstSheet, matrix)
   const textRaw = decodeBufferToText(buffer)
+  const companyFromText = (() => {
+    if (!textRaw) return null
+    const firstLine = textRaw.split(/\r?\n/).find((l) => l.trim().length > 0)
+    if (!firstLine) return null
+    const firstVal = firstLine.split(',')[0]?.trim() || ''
+    const digits = firstVal.replace(/\D/g, '')
+    if (!digits) return null
+    const num = Number(digits)
+    return Number.isNaN(num) ? null : num
+  })()
+  const effectiveCompany = companyInfo.code || companyFromText || 0
+  const effectiveLabel =
+    effectiveCompany !== null && effectiveCompany !== undefined
+      ? `${String(effectiveCompany).padStart(4, '0')}${companyInfo.firstWord ? ` - ${companyInfo.firstWord}` : ''}`
+      : companyInfo.label
   if (textRaw && textRaw.includes('Evento,Colaborador')) {
-    const parsed = parseEventosPayrollText(textRaw)
-    if (parsed.length > 0) {
+    const parsedBase = parseEventosPayrollText(textRaw)
+    if (parsedBase.length > 0) {
+      const parsed = parsedBase.map((row) => ({ ...row, company: effectiveCompany }))
       const competence = parsed[0]?.Competencia || ''
       const columns = ['cadastro', 'Colaborador', 'Competencia', 'Pagamento', 'Situacao', 'Evento', 'Referencia', 'valor'].filter((c) =>
         parsed.some((r) => c in r)
       )
-      return { rows: parsed, competence, columns }
+      return { rows: parsed, competence, columns, company: effectiveCompany, companyLabel: effectiveLabel, companyName: companyInfo.name }
     }
   }
-
-  const workbook = XLSX.read(buffer, { type: 'array' })
-  const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
-  const matrix = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: true, defval: '', blankrows: false }) as any[][]
   const competenceFromSheet = extractCompetenceFromSheet(matrix)
 
   if (matrix.length > 0 && hasStructuredHeaders(matrix[0])) {
     const dataRows = matrix.slice(1)
     const rows = dataRows
-      .map((r) => buildRowFromHeader(matrix[0], r, competenceFromSheet))
+      .map((r) => {
+        const built = buildRowFromHeader(matrix[0], r, competenceFromSheet)
+        if (built) return { ...built, company: effectiveCompany }
+        return null
+      })
       .filter(Boolean) as PayrollTransformRow[]
-    return { rows, competence: competenceFromSheet, columns: ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor'] }
+    return {
+      rows,
+      competence: competenceFromSheet,
+      columns: ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor'],
+      company: effectiveCompany,
+      companyLabel: effectiveLabel,
+      companyName: companyInfo.name,
+    }
   }
 
   const headerIdx = findHeaderRowIndex(matrix)
@@ -393,18 +445,25 @@ export const transformPayrollSheet = (buffer: ArrayBuffer): PayrollTransformResu
       const built = buildRowFromHeader(headerRow, dataRow, competenceFromSheet)
       if (built) rows.push(built)
     }
-    return { rows, competence: competenceFromSheet, columns: ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor'] }
+    return {
+      rows: rows.map((r) => ({ ...r, company: effectiveCompany })),
+      competence: competenceFromSheet,
+      columns: ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor'],
+      company: effectiveCompany,
+      companyLabel: effectiveLabel,
+      companyName: companyInfo.name,
+    }
   }
 
   // Tenta usar o layout de eventos (FPRF004) convertido para CSV
   const csvPayload = rowsToCsv(matrix)
-  const eventosRows = parseEventosPayrollText(csvPayload)
+  const eventosRows = parseEventosPayrollText(csvPayload).map((row) => ({ ...row, company: effectiveCompany }))
   if (eventosRows.length > 0) {
     const competence = eventosRows[0]?.Competencia || competenceFromSheet
     const columns = ['cadastro', 'Colaborador', 'Competencia', 'Pagamento', 'Situacao', 'Evento', 'Referencia', 'valor'].filter((c) =>
       eventosRows.some((r) => c in r)
     )
-    return { rows: eventosRows, competence, columns }
+    return { rows: eventosRows, competence, columns, company: effectiveCompany, companyLabel: effectiveLabel, companyName: companyInfo.name }
   }
 
   const fallback = XLSX.utils.sheet_to_json(firstSheet, { defval: '', raw: true, blankrows: false }) as any[]
@@ -416,5 +475,12 @@ export const transformPayrollSheet = (buffer: ArrayBuffer): PayrollTransformResu
   }) as PayrollTransformRow[]
 
   const columns = rows.length > 0 ? Object.keys(rows[0]) : []
-  return { rows, competence: competenceFromSheet, columns }
+  return {
+    rows: rows.map((r) => ({ ...r, company: effectiveCompany })),
+    competence: competenceFromSheet,
+    columns,
+    company: effectiveCompany,
+    companyLabel: effectiveLabel,
+    companyName: companyInfo.name,
+  }
 }

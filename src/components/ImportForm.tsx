@@ -26,6 +26,8 @@ interface ImportFormProps {
   cadastroHeaders: string[]
   folhaHeaders: string[]
   overtimeHeaders: string[]
+  previewLoading: boolean
+  onTogglePreview: () => void
 }
 
 const ImportForm: React.FC<ImportFormProps> = ({
@@ -42,17 +44,11 @@ const ImportForm: React.FC<ImportFormProps> = ({
   cadastroHeaders,
   folhaHeaders,
   overtimeHeaders,
+  previewLoading,
+  onTogglePreview,
 }) => {
   const { sheetType, selectedFile, status, messages, showPreview, progress, sheetData } = state
   const hasPreviewData = sheetData.length > 0
-  const [isPreviewLoading, setIsPreviewLoading] = React.useState(false)
-
-  const handleTogglePreview = () => {
-    if (isPreviewLoading) return
-    setIsPreviewLoading(true)
-    dispatch({ type: 'SET_PREVIEW', payload: !showPreview })
-    window.setTimeout(() => setIsPreviewLoading(false), 0)
-  }
 
   return (
     <div className="lg:col-span-6 bg-slate-900/70 border border-white/10 rounded-xl p-4 space-y-4">
@@ -148,12 +144,12 @@ const ImportForm: React.FC<ImportFormProps> = ({
                 <button
                   type="button"
                   className="flex items-center gap-2 text-white/80 text-xs cursor-pointer select-none disabled:opacity-60 disabled:cursor-not-allowed"
-                  onClick={handleTogglePreview}
-                  onKeyDown={(e) => e.key === 'Enter' && handleTogglePreview()}
+                  onClick={onTogglePreview}
+                  onKeyDown={(e) => e.key === 'Enter' && onTogglePreview()}
                   aria-pressed={showPreview}
-                  disabled={isPreviewLoading}
+                  disabled={previewLoading}
                 >
-                  {isPreviewLoading ? (
+                  {previewLoading ? (
                     <Loader2 className="w-4 h-4 animate-spin text-emerald-200" />
                   ) : showPreview ? (
                     <CircleCheckBig className="w-4 h-4 text-emerald-300" />
@@ -161,7 +157,7 @@ const ImportForm: React.FC<ImportFormProps> = ({
                     <Circle className="w-4 h-4 text-white" />
                   )}
                   <span className={showPreview ? 'text-emerald-200' : 'text-white/80'}>
-                    {isPreviewLoading ? 'Carregando tabela...' : 'Preview'}
+                    {previewLoading ? 'Carregando tabela...' : 'Preview'}
                   </span>
                 </button>
               </div>

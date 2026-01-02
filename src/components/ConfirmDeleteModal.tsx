@@ -33,6 +33,10 @@ const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   cancelLabel = 'Cancelar',
 }) => {
   if (!open) return null
+  const passwordFieldName = React.useMemo(
+    () => `payroll-confirm-${Math.random().toString(36).slice(2)}`,
+    []
+  )
 
   return (
     <div className="absolute inset-x-0 bottom-0 -top-[15px] z-40 flex items-center justify-center bg-black/70 px-4 rounded-2xl overflow-hidden">
@@ -49,12 +53,44 @@ const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
             </div>
           </div>
           <div className="mt-4 flex items-end gap-4 flex-wrap justify-between">
+            {/* Campos-fantasma para desestimular gerenciadores de senha */}
+            <input
+              type="text"
+              name={`fake-user-${passwordFieldName}`}
+              autoComplete="username"
+              tabIndex={-1}
+              className="sr-only"
+              aria-hidden="true"
+            />
+            <input
+              type="password"
+              name={`fake-pass-${passwordFieldName}`}
+              autoComplete="new-password"
+              tabIndex={-1}
+              className="sr-only"
+              aria-hidden="true"
+            />
             <div className="w-full max-w-[220px]">
               <label className="text-white/70 text-xs mb-1 block">
                 {passwordLabel} <span className="text-rose-400">{Math.min(attempts, maxAttempts)}/{maxAttempts}</span>
               </label>
               <input
                 type="password"
+                name={passwordFieldName}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                autoFocus
+                inputMode="text"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                formNoValidate
+                spellCheck={false}
+                data-lpignore="true"
+                data-1p-ignore="true"
+                className={`neutralize-autofill w-full bg-white/5 text-white text-sm border rounded-lg px-3 py-2.5 outline-none focus:border-emerald-400 ${
+                  passwordError ? 'border-rose-400' : 'border-white/10'
+                }`}
                 value={passwordValue}
                 onChange={(e) => onPasswordChange(e.target.value)}
                 onKeyDown={(e) => {
@@ -63,9 +99,6 @@ const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
                     onConfirm()
                   }
                 }}
-                className={`w-full bg-white/5 text-white text-sm border rounded-lg px-3 py-2.5 outline-none focus:border-emerald-400 ${
-                  passwordError ? 'border-rose-400' : 'border-white/10'
-                }`}
                 placeholder="Digite sua senha"
               />
               {passwordError === 'required' && (

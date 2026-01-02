@@ -25,10 +25,19 @@ const PayrollConflictModal: React.FC<PayrollConflictModalProps> = ({
   supabaseUrl,
   supabaseKey,
 }) => {
-  const { payrollConflictRef, payrollConflictPassword, payrollPasswordErrorType, payrollPasswordAttempts, payrollConflictDate, selectedFile } = state
+  const { payrollConflictRef, payrollConflictPassword, payrollPasswordErrorType, payrollPasswordAttempts, payrollConflictDate, selectedFile, previewMeta } = state
   const sessionUser = loadSession()
 
   if (!payrollConflictRef) return null
+
+  const competenceLabel = React.useMemo(() => {
+    if (payrollConflictRef && payrollConflictRef !== '-') return payrollConflictRef
+    if (payrollConflictDate && /^\d{4}-\d{2}-\d{2}$/.test(payrollConflictDate)) {
+      const [y, m] = payrollConflictDate.split('-')
+      return `${m}/${y}`
+    }
+    return payrollConflictDate || ''
+  }, [payrollConflictDate, payrollConflictRef])
 
   const handleDelete = async () => {
     const pwd = payrollConflictPassword.trim()
@@ -42,12 +51,13 @@ const PayrollConflictModal: React.FC<PayrollConflictModalProps> = ({
     }
     const passwordResult = await verifyPassword(pwd, sessionUser.password)
     if (!passwordResult) {
-      dispatch({ type: 'INCREMENT_PASSWORD_ATTEMPTS' });
-      dispatch({ type: 'SET_PAYROLL_PASSWORD_ERROR', payload: 'invalid' });
-      if (payrollPasswordAttempts + 1 >= 3) {
-        pushMessage('XxX Parece que voce nao tem acesso a exclusao');
-        dispatch({ type: 'SET_STATUS', payload: 'error' });
+      const nextAttempts = payrollPasswordAttempts + 1
+      dispatch({ type: 'INCREMENT_PASSWORD_ATTEMPTS' })
+      dispatch({ type: 'SET_PAYROLL_PASSWORD_ERROR', payload: 'invalid' })
+      if (nextAttempts >= 3) {
+        dispatch({ type: 'SET_STATUS', payload: 'error' })
         dispatch({ type: 'RESET_PAYROLL_CONFLICT' })
+        pushMessage('XxX Parece que voce nao tem acesso a exclusao')
       }
       return
     }
@@ -56,16 +66,31 @@ const PayrollConflictModal: React.FC<PayrollConflictModalProps> = ({
       pushMessage(`Excluindo fechamento da folha pgto : ${payrollConflictRef}`)
       dispatch({ type: 'SET_STATUS', payload: 'uploading' })
       try {
-        const deleteResult = await deletePayrollByMonth(payrollConflictDate, supabaseUrl, supabaseKey)
+        const companyDigits = previewMeta ? (previewMeta.match(/\d{1,}/) || [])[0] : undefined
+        const companyNum = companyDigits ? Number(companyDigits) : null
+        const deleteResult = await deletePayrollByMonth(payrollConflictDate, companyNum, supabaseUrl, supabaseKey)
         if (!deleteResult.ok) {
           const errorMessage = deleteResult.error ?? 'Erro desconhecido ao excluir dados'
           dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [`XxX Erro ao excluir dados: ${errorMessage}`] } })
           dispatch({ type: 'RESET_PAYROLL_CONFLICT' })
           return
         }
-        pushMessage(`OoO Total ${deleteResult.deleted} registro(s) excluido(s) da folha ref. ${payrollConflictRef}`)
+        pushMessage(`OoO Total ${deleteResult.deleted} registro(s) excluido(s) da folha ref. ${competenceLabel || payrollConflictRef}`)
+        const companyLabel = companyDigits ? String(companyDigits).padStart(4, '0') : ''
+        const payrollTableLabel =
+          companyLabel && competenceLabel
+            ? `payroll ${companyLabel}-${competenceLabel}`
+            : companyLabel && payrollConflictRef
+              ? `payroll ${companyLabel}-${payrollConflictRef}`
+              : competenceLabel
+                ? `payroll Ref. ${competenceLabel}`
+                : payrollConflictRef
+                  ? `payroll Ref. ${payrollConflictRef}`
+                  : companyLabel
+                    ? `payroll ${companyLabel}`
+                    : 'payroll'
         await insertHistory({
-            table: payrollConflictRef ? `payroll Ref. ${payrollConflictRef}` : 'payroll',
+            table: payrollTableLabel,
             actions: 'Delete',
             file: selectedFile?.name || '-',
             user: userName || '-',

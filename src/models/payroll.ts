@@ -5,6 +5,7 @@ export interface PayrollPayload {
   references_: number | null
   volue: number | null
   competence: string | null
+  company: number | null
   type_registration: string
   user_registration: string | null
   date_registration: string
