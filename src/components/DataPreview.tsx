@@ -287,13 +287,14 @@ const DataPreview: React.FC<DataPreviewProps> = ({
   }
 
   const folhaTotals = useMemo(() => {
-    if (!isFolha) return { referencia: 0, valor: 0, quantidade: 0 }
     const reduced = filteredData.reduce(
       (acc, row) => {
-        const refVal = row['Referencia'] ?? row['referencia']
-        const valVal = row['valor'] ?? row['Valor']
-        acc.referencia += parseNumberCell(refVal)
-        acc.valor += parseNumberCell(valVal)
+        if (isFolha) {
+          const refVal = row['Referencia'] ?? row['referencia']
+          const valVal = row['valor'] ?? row['Valor']
+          acc.referencia += parseNumberCell(refVal)
+          acc.valor += parseNumberCell(valVal)
+        }
         acc.quantidade += 1
         return acc
       },
@@ -378,20 +379,24 @@ const DataPreview: React.FC<DataPreviewProps> = ({
             ))}
           </div>
         )}
-        {isFolha && (
+        {(isFolha || isOvertime) && (
           <div className="flex flex-wrap items-center gap-2 ml-0 sm:ml-4">
             <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
               <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Quand</p>
               <p className="text-emerald-200 font-semibold text-sm text-center">{folhaTotals.quantidade}</p>
             </div>
-            <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
-              <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Referencia</p>
-              <p className="text-emerald-200 font-semibold text-sm text-center">{formatCurrency(folhaTotals.referencia)}</p>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
-              <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Valor</p>
-              <p className="text-emerald-200 font-semibold text-sm text-center">{formatCurrency(folhaTotals.valor)}</p>
-            </div>
+            {isFolha && (
+              <>
+                <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
+                  <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Referencia</p>
+                  <p className="text-emerald-200 font-semibold text-sm text-center">{formatCurrency(folhaTotals.referencia)}</p>
+                </div>
+                <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
+                  <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Valor</p>
+                  <p className="text-emerald-200 font-semibold text-sm text-center">{formatCurrency(folhaTotals.valor)}</p>
+                </div>
+              </>
+            )}
           </div>
         )}
         {showFilterInput && (

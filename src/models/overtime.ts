@@ -8,6 +8,7 @@ export interface OvertimePayload {
   hrs506: string | null
   hrs511: string | null
   hrs512: string | null
+  company?: number | null
   type_registration: string
   user_registration: string | null
   date_registration: string

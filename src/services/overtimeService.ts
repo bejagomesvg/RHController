@@ -67,6 +67,10 @@ const parseDateIso = (val: any): string | null => {
     if (matchBr) {
       return `${matchBr[3]}-${matchBr[2]}-${matchBr[1]}`
     }
+    const matchMonthYear = trimmed.match(/^(\d{2})\/(\d{4})$/)
+    if (matchMonthYear) {
+      return `${matchMonthYear[2]}-${matchMonthYear[1]}-01`
+    }
     const matchIso = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/)
     if (matchIso) return trimmed
   }
@@ -109,6 +113,7 @@ export const checkOvertimeDateExists = async (
 
 export const checkOvertimeDatesExist = async (
   isoDates: Set<string>,
+  company?: number | null,
   supabaseUrl?: string,
   supabaseKey?: string
 ): Promise<OvertimeDatesCheck> => {
@@ -124,6 +129,9 @@ export const checkOvertimeDatesExist = async (
     const url = new URL(`${supabaseUrl}/rest/v1/overtime`)
     url.searchParams.set('select', 'date_')
     url.searchParams.append('date_', `in.(${inParam})`)
+    if (company !== null && company !== undefined) {
+      url.searchParams.append('company', `eq.${company}`)
+    }
     url.searchParams.set('limit', '1')
 
     const res = await fetch(url.toString(), {
@@ -143,6 +151,7 @@ export const checkOvertimeDatesExist = async (
 
 export const deleteOvertimeByDate = async (
   dateIso: string,
+  company?: number | null,
   supabaseUrl?: string,
   supabaseKey?: string
 ): Promise<OvertimeDeleteResult> => {
@@ -158,6 +167,9 @@ export const deleteOvertimeByDate = async (
 
     const url = new URL(`${supabaseUrl}/rest/v1/overtime`)
     url.searchParams.append('date_', `eq.${iso}`)
+    if (company !== null && company !== undefined) {
+      url.searchParams.append('company', `eq.${company}`)
+    }
 
     const res = await fetch(url.toString(), {
       method: 'DELETE',
@@ -205,6 +217,7 @@ export const insertOvertime = async (
       hrs506: parseTimeToInterval(row['506']),
       hrs511: parseTimeToInterval(row['511']),
       hrs512: parseTimeToInterval(row['512']),
+      company: parseNumber(row['company'] ?? row['Empresa']),
       type_registration: 'Importado',
       user_registration: userName || null,
       date_registration: new Date().toISOString(),

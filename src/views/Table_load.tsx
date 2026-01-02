@@ -612,8 +612,19 @@ const TableLoad: React.FC<TableLoadProps> = ({
                 ? transformed.period.trim()
                 : getRefFullDate(transformed.period))
               : ''
-            const periodSuffix = periodDisplay ? ` Data: ${periodDisplay}` : ''
-            pushMessage(`OoO Transformacao pronta (${transformed.rows.length} linha(s)).${periodSuffix}`)
+            pushMessage(`OoO Transformacao pronta (${transformed.rows.length} linha(s)).`)
+            const metaOvertime =
+              transformed.companyLabel ||
+              (typeof transformed.company === 'number' && transformed.company > 0
+                ? `${String(transformed.company).padStart(4, '0')}`
+                : '')
+            if (metaOvertime) {
+              dispatch({ type: 'SET_PREVIEW_META', payload: metaOvertime })
+              pushMessage(`Empresa: ${metaOvertime}`)
+            }
+            if (periodDisplay) {
+              pushMessage(`Data: ${periodDisplay}`)
+            }
           }
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : 'Falha ao transformar horas extras.'
@@ -715,8 +726,16 @@ const TableLoad: React.FC<TableLoadProps> = ({
             ? transforms.overtime.columns
             : (jsonData.length > 0 ? Object.keys(jsonData[0]) : [])
           headers = derivedColumns.length > 0
-            ? derivedColumns
+            ? derivedColumns.filter((h) => h !== 'company')
             : ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512']
+          const companyCode = transforms.overtime.company
+          if (companyCode) {
+            jsonData = jsonData.map((row) => ({
+              ...row,
+              company: companyCode ?? row['company'],
+              Empresa: String(companyCode).padStart(4, '0'),
+            }))
+          }
         } else if (isFolha && transforms?.payroll?.rows) {
           jsonData = transforms.payroll.rows
           headers = transforms.payroll.columns && transforms.payroll.columns.length > 0
@@ -798,6 +817,14 @@ const TableLoad: React.FC<TableLoadProps> = ({
           )
         } else if (isOvertime) {
           const headerDate = transforms?.overtime?.period || j5DateIso
+          const metaOvertime =
+            transforms?.overtime?.companyLabel ||
+            (typeof transforms?.overtime?.company === 'number' && transforms?.overtime?.company > 0
+              ? `${String(transforms.overtime.company).padStart(4, '0')}`
+              : state.previewMeta)
+          if (metaOvertime) {
+            dispatch({ type: 'SET_PREVIEW_META', payload: metaOvertime })
+          }
           validationResult = await validateOvertimeSheet(
             jsonData,
             cols,
@@ -807,6 +834,8 @@ const TableLoad: React.FC<TableLoadProps> = ({
             supabaseUrl,
             supabaseKey,
             headerDate,
+            transforms?.overtime?.company ?? null,
+            metaOvertime,
           )
         } else {
           pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
@@ -953,9 +982,22 @@ const TableLoad: React.FC<TableLoadProps> = ({
         }
         finalMessages.push(`OoO Horas extras: ${overtimeResult.inserted} linha(s) inseridas.`)
         const refDateLog = getRefFullDate(sheetData[0]?.['Data'])
+        const companyRaw = sheetData[0]?.['company'] ?? sheetData[0]?.['Empresa'] ?? state.previewMeta
+        const companyDigits = companyRaw ? String(companyRaw).match(/\d{1,}/) : null
+        const companyDisplay = companyDigits && !Number.isNaN(Number(companyDigits[0]))
+          ? String(Number(companyDigits[0])).padStart(4, '0')
+          : ''
+        const overtimeTableLabel =
+          companyDisplay && refDateLog
+            ? `overtime ${companyDisplay}-${refDateLog}`
+            : companyDisplay
+              ? `overtime ${companyDisplay}`
+              : refDateLog
+                ? `overtime Ref. ${refDateLog}`
+                : 'overtime'
         await insertHistory(
           {
-            table: refDateLog ? `overtime Ref. ${refDateLog}` : 'overtime',
+            table: overtimeTableLabel,
             actions: 'Inclusao',
             file: selectedFile?.name || '-',
             user: userName || '-',
@@ -1079,7 +1121,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
           columns={columns}
           isFolha={sheetType === 'FOLHA PGTO'}
           isOvertime={isOvertime}
-          metaTitle={sheetType === 'FOLHA PGTO' ? state.previewMeta || undefined : undefined}
+          metaTitle={state.previewMeta || undefined}
           onUpdateRow={isOvertime || sheetType === 'FOLHA PGTO' ? handleUpdatePreviewRow : undefined}
           onDeleteRow={isOvertime || sheetType === 'FOLHA PGTO' ? handleDeletePreviewRow : undefined}
           rowErrors={rowErrors} />

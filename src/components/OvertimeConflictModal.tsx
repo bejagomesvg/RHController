@@ -25,10 +25,32 @@ const OvertimeConflictModal: React.FC<OvertimeConflictModalProps> = ({
   supabaseUrl,
   supabaseKey,
 }) => {
-  const { overtimeConflictRef, overtimeConflictDate, overtimePassword, overtimePasswordError, overtimePasswordAttempts, selectedFile } = state
+  const {
+    overtimeConflictRef,
+    overtimeConflictDate,
+    overtimePassword,
+    overtimePasswordError,
+    overtimePasswordAttempts,
+    selectedFile,
+    previewMeta,
+  } = state
   const sessionUser = loadSession()
 
   if (!overtimeConflictRef) return null
+
+  const formatDateDisplay = (val?: string | null) => {
+    if (!val) return '-'
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(val.trim())) return val.trim()
+    const isoMatch = val.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (isoMatch) {
+      const [, y, m, d] = isoMatch
+      return `${d}/${m}/${y}`
+    }
+    return val
+  }
+  const companyDigits = previewMeta ? (previewMeta.match(/\d{1,}/) || [])[0] : undefined
+  const companyLabel = companyDigits ? String(Number(companyDigits)).padStart(4, '0') : '-'
+  const dateLabel = formatDateDisplay(overtimeConflictRef || overtimeConflictDate)
 
   const handleDelete = async () => {
     const pwd = overtimePassword.trim()
@@ -53,20 +75,35 @@ const OvertimeConflictModal: React.FC<OvertimeConflictModalProps> = ({
     }
 
     if (overtimeConflictRef && overtimeConflictDate) {
-      pushMessage(`Excluindo horas extras da data: ${overtimeConflictRef}`)
+      const dateDisplay = formatDateDisplay(overtimeConflictRef || overtimeConflictDate)
+      pushMessage(`Excluindo horas extras da data: ${dateDisplay}`)
       dispatch({ type: 'SET_STATUS', payload: 'uploading' })
       try {
-        const deleteResult = await deleteOvertimeByDate(overtimeConflictDate, supabaseUrl, supabaseKey)
+        const companyNum = companyDigits ? Number(companyDigits) : null
+        const deleteResult = await deleteOvertimeByDate(overtimeConflictDate, companyNum, supabaseUrl, supabaseKey)
         if (!deleteResult.ok) {
           const errorMessage = deleteResult.error ?? 'Erro desconhecido ao excluir dados'
           dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [`XxX Erro ao excluir dados: ${errorMessage}`] } })
           dispatch({ type: 'RESET_OVERTIME_CONFLICT' })
           return
         }
-        pushMessage(`OoO Total ${deleteResult.deleted} registro(s) excluido(s) do dia ${overtimeConflictRef}`)
+        const companyLabelLog = companyDigits ? String(Number(companyDigits)).padStart(4, '0') : ''
+        const tableLabel =
+          companyLabelLog && dateDisplay
+            ? `overtime ${companyLabelLog}-${dateDisplay}`
+            : companyLabelLog && overtimeConflictRef
+              ? `overtime ${companyLabelLog}-${overtimeConflictRef}`
+              : companyLabelLog
+                ? `overtime ${companyLabelLog}`
+                : dateDisplay
+                  ? `overtime Ref. ${dateDisplay}`
+                  : overtimeConflictRef
+                    ? `overtime Ref. ${overtimeConflictRef}`
+                    : 'overtime'
+        pushMessage(`OoO Total ${deleteResult.deleted} registro(s) excluido(s) do dia ${dateDisplay}`)
         await insertHistory(
           {
-            table: overtimeConflictRef ? `overtime Ref. ${overtimeConflictRef}` : 'overtime',
+            table: tableLabel,
             actions: 'Delete',
             file: selectedFile?.name || '-',
             user: userName || '-',
@@ -89,10 +126,16 @@ const OvertimeConflictModal: React.FC<OvertimeConflictModalProps> = ({
       open={Boolean(overtimeConflictRef)}
       title="Excluir Horas Extras!"
       description={
-        <p>
-          Horas extras da data {overtimeConflictRef} ja existem. Voce pode exclui-las e inserir novos dados. Isso ira
-          excluir todos os dados dessa data definitivamente.
-        </p>
+        <div className="space-y-2 text-sm leading-relaxed text-white/90">
+          <p>
+            Foi identificado que já existem horas extras registradas para <strong className='text-amber-200'>Emp: {companyLabel}</strong> na{' '}
+            <strong className='text-amber-200'>Data: {dateLabel}</strong>.
+          </p>
+          <p>Para inserir novos dados, será necessário excluir os registros existentes.</p>
+          <p className="text-amber-200 flex items-start gap-1">
+              <strong>Atenção:</strong> esta operação irá excluir definitivamente todos os dados referentes à empresa e à data informada.
+          </p>
+        </div>
       }
       passwordValue={overtimePassword}
       passwordError={overtimePasswordError}

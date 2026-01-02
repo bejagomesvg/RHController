@@ -45,6 +45,8 @@ export const validateOvertimeSheet = async (
   supabaseUrl?: string,
   supabaseKey?: string,
   headerDate?: string,
+  companyCode?: number | null,
+  companyLabel?: string,
 ): Promise<{ ok: boolean; paused?: boolean }> => {
   const headerDateIso = headerDate ? formatDate(headerDate) || String(headerDate) : ''
   const normalizedCols = cols.map((c) => normalizeHeader(c))
@@ -109,7 +111,7 @@ export const validateOvertimeSheet = async (
   })
   const firstIso = Array.from(uniqueDates)[0] || ''
 
-  const checkBatch = await checkOvertimeDatesExist(uniqueDates, supabaseUrl, supabaseKey)
+  const checkBatch = await checkOvertimeDatesExist(uniqueDates, companyCode ?? null, supabaseUrl, supabaseKey)
   if (!checkBatch.ok) {
     const detail = checkBatch.error ? ` Detalhe: ${checkBatch.error}` : ''
     dispatch({ type: 'IMPORT_FAILURE', payload: { messages: [`XxX Erro ao verificar horas extras. ${detail}`] } })
@@ -154,12 +156,14 @@ export const validateOvertimeSheet = async (
       '506': preview506,
       '511': preview511,
       '512': preview512,
+      company: companyCode ?? row['company'],
+      Empresa: companyCode !== null && companyCode !== undefined ? String(companyCode).padStart(4, '0') : row['Empresa'],
     }
   })
 
   dispatch({
     type: 'FILE_READ_SUCCESS',
-    payload: { data: normalized, columns: [...ordered, ...remaining], messages: [], rowErrors: [] },
+    payload: { data: normalized, columns: [...ordered, ...remaining], messages: [], rowErrors: [], meta: companyLabel },
   })
   return { ok: true }
 }

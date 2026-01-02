@@ -10,11 +10,14 @@ export interface OvertimeTransformRow {
   '506': string
   '511': string
   '512': string
+  company?: number | null
 }
 
 export interface OvertimeTransformResult {
   rows: OvertimeTransformRow[]
   period: string
+  company?: number | null
+  companyLabel?: string
   columns?: string[]
 }
 
@@ -117,11 +120,48 @@ const extrairPeriodo = (matriz: any[][]): string => {
   return ''
 }
 
+const extractCompanyInfo = (firstSheet: XLSX.Sheet, matrix: any[][]) => {
+  const getCell = (address: string) => {
+    const cell: any = (firstSheet as any)?.[address]
+    return cell && 'v' in cell ? cell.v : undefined
+  }
+  const fromMatrix = (r: number, c: number) => {
+    if (!Array.isArray(matrix) || !matrix[r]) return undefined
+    return matrix[r][c]
+  }
+  // Para horas extras, empresa costuma estar em A2 e descricao em B2 (fallback A1/C1)
+  const rawCode = getCell('A2') ?? fromMatrix(1, 0) ?? getCell('A1') ?? fromMatrix(0, 0)
+  const rawName = getCell('B2') ?? fromMatrix(1, 1) ?? getCell('C1') ?? fromMatrix(0, 2)
+  const codeNum = rawCode !== undefined ? Number(String(rawCode).replace(/\D/g, '')) : null
+  const code = Number.isNaN(codeNum as number) ? 0 : (codeNum as number)
+  const name = rawName !== undefined && rawName !== null ? String(rawName).trim() : ''
+  const firstWord = name ? name.split(/\s+/)[0] : ''
+  const labelBase = `${String(code).padStart(4, '0')}`
+  const label = firstWord ? `${labelBase} - ${firstWord}` : labelBase
+  return { code, label }
+}
+
+const formatCompetenceFromDate = (dateStr: string): string => {
+  if (!dateStr) return ''
+  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (isoMatch) {
+    const [, y, m] = isoMatch
+    return `${m}/${y}`
+  }
+  const brMatch = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (brMatch) {
+    const [, , m, y] = brMatch
+    return `${m}/${y}`
+  }
+  return ''
+}
+
 export const transformOvertimeApuracao = (buffer: ArrayBuffer): OvertimeTransformResult => {
   const workbook = XLSX.read(buffer, { type: 'array' })
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
   const matriz = XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: true, defval: null, blankrows: false }) as any[][]
   const dateFromJ5 = formatJ5Date(getDateFromJ5(matriz, firstSheet))
+  const companyInfo = extractCompanyInfo(firstSheet, matriz)
 
   // Caso o arquivo já esteja no layout final (Data, Cadastro, Nome, 303...512), apenas normaliza para HH:MM
   if (matriz.length > 0 && hasStructuredHeaders(matriz[0])) {
@@ -136,9 +176,17 @@ export const transformOvertimeApuracao = (buffer: ArrayBuffer): OvertimeTransfor
       '506': toHHMM(row['506']),
       '511': toHHMM(row['511']),
       '512': toHHMM(row['512']),
+      company: companyInfo.code,
+      Competencia: formatCompetenceFromDate(dateFromJ5 || ''),
     }))
-    return { rows, period: dateFromJ5 || '', columns: ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512'] }
+    return {
+    rows,
+    period: dateFromJ5 || '',
+    company: companyInfo.code,
+    companyLabel: companyInfo.label,
+      columns: ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512'],
   }
+}
 
   const colaboradores = new Map<
     string,
@@ -258,7 +306,14 @@ export const transformOvertimeApuracao = (buffer: ArrayBuffer): OvertimeTransfor
       '506': minutosParaHHMM(colab.minutos['506']),
       '511': minutosParaHHMM(colab.minutos['511']),
       '512': minutosParaHHMM(colab.minutos['512']),
+      company: companyInfo.code,
     }))
 
-  return { rows, period: periodo, columns: ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512'] }
+  return {
+    rows,
+    period: periodo,
+    company: companyInfo.code,
+    companyLabel: companyInfo.label,
+    columns: ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512'],
+  }
 }
