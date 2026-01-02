@@ -64,7 +64,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
   show,
   data,
   columns,
-  isFolha: _isFolha,
+  isFolha,
   isOvertime,
   rowErrors,
   filterText: externalFilter,
@@ -76,6 +76,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
   onDeleteRow,
 }) => {
   const [localFilter, setLocalFilter] = useState('')
+  const [selectedEvento, setSelectedEvento] = useState('')
   const isControlled = onFilterChange !== undefined
   const filterText = isControlled ? (externalFilter ?? '') : localFilter
   const setFilterText = isControlled ? onFilterChange : setLocalFilter
@@ -155,16 +156,38 @@ const DataPreview: React.FC<DataPreviewProps> = ({
     return totals
   }, [data, isOvertime, parseTimeToMinutes])
 
+  const folhaEventoOptions = useMemo(() => {
+    if (!isFolha) return []
+    const map = new Map<string, string>()
+    data.forEach((row) => {
+      const code = String(row['Evento'] ?? row['evento'] ?? '').trim()
+      if (!code) return
+      const desc = String((row as any)['DescricaoEvento'] ?? '').trim()
+      const label = desc ? `${code} - ${desc}` : code
+      if (!map.has(code)) {
+        map.set(code, label)
+      }
+    })
+    return Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+  }, [data, isFolha])
+
   const filteredData = useMemo(() => {
     if (isControlled) return data
+    if (isFolha) {
+      if (!selectedEvento.trim()) return data
+      const needle = selectedEvento.toLowerCase()
+      return data.filter((row) => String(row['Evento'] ?? row['evento'] ?? '').toLowerCase() === needle)
+    }
     if (!filterText.trim()) return data
     const needle = filterText.trim().toLowerCase()
     return data.filter((row) => {
       const cadastro = String(row['Cadastro'] ?? '').toLowerCase()
-      const nome = String(row['Nome'] ?? '').toLowerCase()
+      const nome = String(row['Nome'] ?? row['Colaborador'] ?? '').toLowerCase()
       return cadastro.includes(needle) || nome.includes(needle)
     })
-  }, [data, filterText, isControlled])
+  }, [data, filterText, isControlled, isFolha, selectedEvento])
 
   const sortedData = useMemo(() => {
     if (!sortConfig) return filteredData
@@ -230,11 +253,75 @@ const DataPreview: React.FC<DataPreviewProps> = ({
     }
   }
 
+  const parseNumberCell = (val: any): number => {
+    if (val === null || val === undefined || val === '') return 0
+    if (typeof val === 'number') return Number.isFinite(val) ? val : 0
+    const raw = String(val).trim()
+    if (!raw) return 0
+
+    const hasComma = raw.includes(',')
+    const hasDot = raw.includes('.')
+    let normalized = raw.replace(/[^\d.,-]/g, '')
+
+    if (hasComma && hasDot) {
+      // assume dot thousand, comma decimal
+      normalized = normalized.replace(/\./g, '').replace(',', '.')
+    } else if (hasComma && !hasDot) {
+      // comma as decimal
+      normalized = normalized.replace(',', '.')
+    } else if (!hasComma && hasDot) {
+      // single dot as decimal, multiple dots as thousand separators
+      const dotCount = (normalized.match(/\./g) || []).length
+      normalized = dotCount > 1 ? normalized.replace(/\./g, '') : normalized
+    }
+
+    const num = Number(normalized)
+    return Number.isNaN(num) ? 0 : num
+  }
+
+  const formatDecimalBR = (val: any): string => {
+    const num = parseNumberCell(val)
+    return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  const folhaTotals = useMemo(() => {
+    if (!isFolha) return { referencia: 0, valor: 0, quantidade: 0 }
+    const reduced = filteredData.reduce(
+      (acc, row) => {
+        const refVal = row['Referencia'] ?? row['referencia']
+        const valVal = row['valor'] ?? row['Valor']
+        acc.referencia += parseNumberCell(refVal)
+        acc.valor += parseNumberCell(valVal)
+        acc.quantidade += 1
+        return acc
+      },
+      { referencia: 0, valor: 0, quantidade: 0 }
+    )
+    return reduced
+  }, [filteredData, isFolha])
+
+  const formatCurrency = (num: number): string => {
+    if (!Number.isFinite(num)) return '0,00'
+    return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  const normalizeCol = (c: string) => c.trim().toLowerCase()
+  const folhaOrder = ['cadastro', 'colaborador', 'competencia', 'pagamento', 'situacao', 'evento', 'referencia', 'valor']
+  const columnsToRender = useMemo(() => {
+    if (!isFolha) return columns
+    const lowerMap = new Map(columns.map((c) => [normalizeCol(c), c]))
+    const ordered = folhaOrder
+      .map((key) => lowerMap.get(key))
+      .filter((c): c is string => !!c)
+    const leftovers = columns.filter((c) => !folhaOrder.includes(normalizeCol(c)))
+    return [...ordered, ...leftovers]
+  }, [columns, isFolha])
+
+  const totalColumnsCount = columnsToRender.length + (showErrorColumn ? 1 : 0) + ((isOvertime || isFolha) ? 1 : 0)
+
   if (!show) {
     return null
   }
-
-  const totalColumnsCount = columns.length + (showErrorColumn ? 1 : 0) + (isOvertime ? 1 : 0)
 
   return (
     <div className="bg-slate-900/70 border border-white/10 rounded-xl overflow-hidden w-full">
@@ -264,15 +351,46 @@ const DataPreview: React.FC<DataPreviewProps> = ({
             ))}
           </div>
         )}
+        {isFolha && (
+          <div className="flex flex-wrap items-center gap-2 ml-0 sm:ml-4">
+            <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
+              <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Quand</p>
+              <p className="text-emerald-200 font-semibold text-sm text-center">{folhaTotals.quantidade}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
+              <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Referencia</p>
+              <p className="text-emerald-200 font-semibold text-sm text-center">{formatCurrency(folhaTotals.referencia)}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 shadow-sm shadow-black/20">
+              <p className="text-white/80 text-[10px] uppercase tracking-wide text-center">Valor</p>
+              <p className="text-emerald-200 font-semibold text-sm text-center">{formatCurrency(folhaTotals.valor)}</p>
+            </div>
+          </div>
+        )}
         {showFilterInput && (
           <div className="ml-auto w-full sm:w-64">
-            <input
-              type="text"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              placeholder="Filtrar por cadastro ou nome"
-              className="w-full bg-white/5 text-white text-xs border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400"
-            />
+            {isFolha ? (
+              <select
+                value={selectedEvento}
+                onChange={(e) => setSelectedEvento(e.target.value)}
+                className="w-full bg-white/5 text-white text-xs border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400"
+              >
+                <option value="" className="bg-slate-900 text-white">Todos os eventos</option>
+                {folhaEventoOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value} className="bg-slate-900 text-white">
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                placeholder="Filtrar por cadastro ou nome"
+                className="w-full bg-white/5 text-white text-xs border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400"
+              />
+            )}
           </div>
         )}
       </div>
@@ -284,7 +402,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
           <thead className="bg-blue-900 border-b border-blue-700 sticky top-0 z-30 text-white shadow-sm shadow-black/30">
             <tr>
               {showErrorColumn && <th className="px-2 py-2 font-semibold text-white/90 uppercase tracking-wide text-center w-8"></th>}
-              {columns.map((col) => {
+              {columnsToRender.map((col) => {
                 const isSorted = sortConfig?.key === col
                 const direction = sortConfig?.direction
                 return (
@@ -300,7 +418,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
                   </th>
                 )
               })}
-              {isOvertime && (
+              {(isOvertime || isFolha) && (
                 <th className="px-3 py-2 font-semibold text-white/90 uppercase tracking-wide text-center">
                   Acoes
                 </th>
@@ -328,7 +446,7 @@ const DataPreview: React.FC<DataPreviewProps> = ({
                       {hasError && <AlertTriangle className="w-4 h-4 text-amber-400 mx-auto" />}
                     </td>
                   )}
-                  {columns.map((col) => {
+                  {columnsToRender.map((col) => {
                     const colKey = col.toLowerCase()
                     const cellError = errorsForThisRow?.get(colKey)
                     const isCellInvalid = !!cellError
@@ -336,9 +454,9 @@ const DataPreview: React.FC<DataPreviewProps> = ({
                     // alinhamento: centro padrão, nome à esquerda, valor salário à direita
                     const normalizedKey = colKey.replace(/\s+/g, '')
                     let alignClass = 'text-center'
-                    if (colKey === 'nome') {
+                    if (colKey === 'nome' || colKey === 'colaborador') {
                       alignClass = 'text-left'
-                    } else if (normalizedKey === 'valorsalario') {
+                    } else if (normalizedKey === 'valorsalario' || normalizedKey === 'referencia' || normalizedKey === 'valor') {
                       alignClass = 'text-right'
                     }
                     const shouldFormatDate = dateColumns.has(colKey)
@@ -346,8 +464,14 @@ const DataPreview: React.FC<DataPreviewProps> = ({
                       ? formatDateCell(row[col])
                       : colKey === 'cpf'
                         ? formatCpfCell(row[col])
-                        : (row[col] ?? '-')
+                        : (isFolha && (normalizedKey === 'referencia' || normalizedKey === 'valor'))
+                          ? formatDecimalBR(row[col])
+                          : (row[col] ?? '-')
                     const isReadOnlyOvertimeField = isOvertime && (colKey === 'data' || colKey === 'cadastro' || colKey === 'nome')
+                    const folhaEditable = isFolha && ['evento', 'referencia', 'valor', 'situacao'].includes(normalizedKey)
+                    const isEditable = isOvertime ? !isReadOnlyOvertimeField : isFolha ? folhaEditable : false
+                    const inputAlignClass =
+                      alignClass === 'text-right' ? 'text-right' : alignClass === 'text-left' ? 'text-left' : 'text-center'
 
                     return (
                       <td
@@ -355,25 +479,33 @@ const DataPreview: React.FC<DataPreviewProps> = ({
                         className={`px-3 py-2 text-white/70 truncate max-w-xs ${alignClass} ${isCellInvalid ? 'ring-1 ring-rose-500 ring-inset' : ''}`}
                         title={cellError}
                       >
-                        {isEditing && !isReadOnlyOvertimeField ? (
+                        {isEditing && isEditable ? (
                           <input
                             inputMode={isOvertime ? 'numeric' : undefined}
                             pattern={isOvertime ? '[0-9]*' : undefined}
-                            className="w-full bg-white/10 text-white text-[11px] border border-white/15 rounded px-2 py-1 outline-none focus:border-emerald-400"
+                            className={`w-full bg-white/10 text-white text-[11px] border border-white/15 rounded px-2 py-1 outline-none focus:border-emerald-400 ${inputAlignClass}`}
                             value={editDraft[col] ?? ''}
                             onChange={(e) => {
                               const rawVal = e.target.value
-                              const formatted = isOvertime ? formatOvertimeInputValue(rawVal) : rawVal
+                              let formatted = rawVal
+                              if (isOvertime) {
+                                formatted = formatOvertimeInputValue(rawVal)
+                              } else if (isFolha && (normalizedKey === 'valor' || normalizedKey === 'referencia')) {
+                                const num = parseNumberCell(rawVal)
+                                formatted = Number.isFinite(num)
+                                  ? num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                  : rawVal
+                              }
                               handleEditChange(col, formatted)
                             }}
-                          />
+                            />
                         ) : (
                           displayValue
                         )}
                       </td>
                     )
                   })}
-                  {isOvertime && (
+                  {(isOvertime || isFolha) && (
                     <td className="px-3 py-2 text-center">
                       {isEditing ? (
                         <div className="flex items-center justify-center gap-2">

@@ -15,6 +15,7 @@ export interface OvertimeTransformRow {
 export interface OvertimeTransformResult {
   rows: OvertimeTransformRow[]
   period: string
+  columns?: string[]
 }
 
 const CODIGOS_INTERESSE = new Set(['303', '304', '505', '506', '511', '512'])
@@ -136,7 +137,7 @@ export const transformOvertimeApuracao = (buffer: ArrayBuffer): OvertimeTransfor
       '511': toHHMM(row['511']),
       '512': toHHMM(row['512']),
     }))
-    return { rows, period: dateFromJ5 || '' }
+    return { rows, period: dateFromJ5 || '', columns: ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512'] }
   }
 
   const colaboradores = new Map<
@@ -259,5 +260,5 @@ export const transformOvertimeApuracao = (buffer: ArrayBuffer): OvertimeTransfor
       '512': minutosParaHHMM(colab.minutos['512']),
     }))
 
-  return { rows, period: periodo }
+  return { rows, period: periodo, columns: ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512'] }
 }

@@ -14,6 +14,7 @@ import { insertOvertime, checkOvertimeDatesExist } from '../services/overtimeSer
 import type { HistoryEntry } from '../models/history'
 import { fetchHistory, insertHistory } from '../services/logService'
 import { transformOvertimeApuracao, type OvertimeTransformResult } from '../utils/overtimeTransformer'
+import { transformPayrollSheet, type PayrollTransformResult } from '../utils/payrollTransformer'
 import ImportForm from '../components/ImportForm'
 import HistoryTable from '../components/HistoryTable'
 import DataPreview from '../components/DataPreview'
@@ -520,20 +521,26 @@ const TableLoad: React.FC<TableLoadProps> = ({
       pushMessage(`Arquivo selecionado: ${file.name}`)
 
       let overtimeTransformed: OvertimeTransformResult | null = null
-      if (isOvertime) {
-        try {
-          const buffer = await file.arrayBuffer()
-          // Evita transformar planilha vazia
-          const workbookCheck = XLSX.read(buffer, { type: 'array' })
-          const firstSheetCheck = workbookCheck.Sheets[workbookCheck.SheetNames[0]]
-          const rawJson = XLSX.utils.sheet_to_json(firstSheetCheck, { defval: '', raw: true, blankrows: false }) as SheetData
-          if (rawJson.length === 0) {
-            pushMessage('XxX Planilha vazia. Selecione um arquivo com dados.')
-            dispatch({ type: 'VALIDATION_ERROR', payload: { messages: ['XxX Planilha vazia. Selecione um arquivo com dados.'] } })
-            return
-          }
+      let payrollTransformed: PayrollTransformResult | null = null
+      let sharedBuffer: ArrayBuffer | null = null
 
-          const transformed = transformOvertimeApuracao(buffer)
+      if (isOvertime || isFolha) {
+        sharedBuffer = await file.arrayBuffer()
+
+        // Evita transformar planilha vazia
+        const workbookCheck = XLSX.read(sharedBuffer, { type: 'array' })
+        const firstSheetCheck = workbookCheck.Sheets[workbookCheck.SheetNames[0]]
+        const rawJson = XLSX.utils.sheet_to_json(firstSheetCheck, { defval: '', raw: true, blankrows: false }) as SheetData
+        if (rawJson.length === 0) {
+          pushMessage('XxX Planilha vazia. Selecione um arquivo com dados.')
+          dispatch({ type: 'VALIDATION_ERROR', payload: { messages: ['XxX Planilha vazia. Selecione um arquivo com dados.'] } })
+          return
+        }
+      }
+
+      if (isOvertime && sharedBuffer) {
+        try {
+          const transformed = transformOvertimeApuracao(sharedBuffer)
           overtimeTransformed = transformed
           if (transformed.rows.length === 0) {
             pushMessage('XxX Transformacao retornou 0 linhas.')
@@ -552,7 +559,31 @@ const TableLoad: React.FC<TableLoadProps> = ({
         }
       } else { }
 
-      readExcelFile(file, overtimeTransformed ? { rows: overtimeTransformed.rows } : undefined)
+      if (isFolha && sharedBuffer) {
+        try {
+          const transformed = transformPayrollSheet(sharedBuffer)
+          payrollTransformed = transformed
+          if (transformed.rows.length === 0) {
+            pushMessage('XxX Transformacao da folha retornou 0 linhas.')
+          } else {
+            const competenceDisplay = transformed.competence
+              ? (/^\d{2}\/\d{2}\/\d{4}$/.test(transformed.competence.trim())
+                ? transformed.competence.trim()
+                : getRefMonthYear(transformed.competence) || transformed.competence)
+              : ''
+            const suffix = competenceDisplay ? ` Comp.: ${competenceDisplay}` : ''
+            pushMessage(`OoO Transformacao da folha pronta (${transformed.rows.length} linha(s)).${suffix}`)
+          }
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : 'Falha ao transformar folha.'
+          pushMessage(`XxX Erro ao transformar folha: ${errMsg}`)
+        }
+        }
+
+      readExcelFile(file, {
+        overtime: overtimeTransformed || undefined,
+        payroll: payrollTransformed || undefined,
+      })
     }
   }
 
@@ -866,7 +897,13 @@ const TableLoad: React.FC<TableLoadProps> = ({
     return { ok: true }
   }, [dispatch, supabaseUrl, supabaseKey])
 
-  const readExcelFile = (file: File, transformedOvertime?: { rows: SheetData; columns?: string[] }) => {
+  const readExcelFile = (
+    file: File,
+    transforms?: {
+      overtime?: OvertimeTransformResult
+      payroll?: PayrollTransformResult
+    }
+  ) => {
     if (!isSupportedSheet) {
       pushMessage(`Regras para "${sheetType}" ainda NAO implementadas.`)
       dispatch({ type: 'RESET_FILE_INPUT' })
@@ -891,14 +928,26 @@ const TableLoad: React.FC<TableLoadProps> = ({
           ? (headerRows[0] || []).map((h: any) => String(h ?? '').trim())
           : Object.keys(jsonData[0] || {})
 
-        if (isOvertime && transformedOvertime?.rows) {
-          jsonData = transformedOvertime.rows
-          const derivedColumns = transformedOvertime.columns && transformedOvertime.columns.length > 0
-            ? transformedOvertime.columns
+        if (isOvertime && transforms?.overtime?.rows) {
+          jsonData = transforms.overtime.rows
+          const derivedColumns = transforms.overtime.columns && transforms.overtime.columns.length > 0
+            ? transforms.overtime.columns
             : (jsonData.length > 0 ? Object.keys(jsonData[0]) : [])
           headers = derivedColumns.length > 0
             ? derivedColumns
             : ['Data', 'Cadastro', 'Nome', '303', '304', '505', '506', '511', '512']
+        } else if (isFolha && transforms?.payroll?.rows) {
+          jsonData = transforms.payroll.rows
+          headers = transforms.payroll.columns && transforms.payroll.columns.length > 0
+            ? transforms.payroll.columns
+            : (jsonData.length > 0 ? Object.keys(jsonData[0]) : ['cadastro', 'Colaborador', 'Evento', 'Competencia', 'Referencia', 'valor'])
+          if (transforms.payroll.competence) {
+            const comp = transforms.payroll.competence
+            jsonData = jsonData.map((row) => ({
+              ...row,
+              Competencia: row['Competencia'] || comp,
+            }))
+          }
         }
 
         if (jsonData.length === 0) {
@@ -915,7 +964,8 @@ const TableLoad: React.FC<TableLoadProps> = ({
         } else if (isFolha) {
           validationResult = await validateFolhaSheet(jsonData, cols, pushMessage)
         } else if (isOvertime) {
-          validationResult = await validateOvertimeSheet(jsonData, cols, pushMessage, j5DateIso)
+          const headerDate = transforms?.overtime?.period || j5DateIso
+          validationResult = await validateOvertimeSheet(jsonData, cols, pushMessage, headerDate)
         } else {
           pushMessage(`OoO Headers validados: ${cols.length} coluna(s)`)
           dispatch({ type: 'FILE_READ_SUCCESS', payload: { data: jsonData, columns: headers, messages: [] } })
@@ -1067,6 +1117,7 @@ const TableLoad: React.FC<TableLoadProps> = ({
     return 'text-white/80'
   }
 
+
   const renderActionIcon = (acao?: string) => {
     const value = (acao || '').toLowerCase()
     if (value === 'inclusao' || value === 'inclus�o') {
@@ -1155,8 +1206,8 @@ const TableLoad: React.FC<TableLoadProps> = ({
           columns={columns}
           isFolha={sheetType === 'FOLHA PGTO'}
           isOvertime={isOvertime}
-          onUpdateRow={isOvertime ? handleUpdatePreviewRow : undefined}
-          onDeleteRow={isOvertime ? handleDeletePreviewRow : undefined}
+          onUpdateRow={isOvertime || sheetType === 'FOLHA PGTO' ? handleUpdatePreviewRow : undefined}
+          onDeleteRow={isOvertime || sheetType === 'FOLHA PGTO' ? handleDeletePreviewRow : undefined}
           rowErrors={rowErrors} />
       </div>
 
