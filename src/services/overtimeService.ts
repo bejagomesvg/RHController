@@ -100,18 +100,21 @@ export const fetchOvertimeSummary = async (
 
     if (company) url.searchParams.append('company', `eq.${company}`)
     if (sector) url.searchParams.append('sector', `eq.${sector}`)
-    const yearSafe = year || String(new Date().getFullYear())
+    const yearSafe = year ? String(year) : null
     const monthSafe = month ? String(month).padStart(2, '0') : null
     const daySafe = day ? String(day).padStart(2, '0') : null
-    if (daySafe && monthSafe) {
+
+    // Só aplicamos filtros de data quando existe ano ou mês selecionado; caso contrário
+    // não restringimos o período para permitir carregar todos os registros.
+    if (yearSafe && monthSafe && daySafe) {
       // Busca do dia 1 até o dia selecionado (inclusive) para permitir soma cumulativa
       url.searchParams.append('date_', `gte.${yearSafe}-${monthSafe}-01`)
       url.searchParams.append('date_', `lte.${yearSafe}-${monthSafe}-${daySafe}`)
-    } else if (monthSafe) {
+    } else if (yearSafe && monthSafe) {
       const lastDay = new Date(Number(yearSafe), Number(monthSafe), 0).getDate()
       url.searchParams.append('date_', `gte.${yearSafe}-${monthSafe}-01`)
       url.searchParams.append('date_', `lte.${yearSafe}-${monthSafe}-${String(lastDay).padStart(2, '0')}`)
-    } else if (year || daySafe) {
+    } else if (yearSafe) {
       url.searchParams.append('date_', `gte.${yearSafe}-01-01`)
       url.searchParams.append('date_', `lte.${yearSafe}-12-31`)
     }

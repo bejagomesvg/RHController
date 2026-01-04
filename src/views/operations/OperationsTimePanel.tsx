@@ -81,7 +81,9 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
   const [rows, setRows] = useState<OvertimeSummaryRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sectorOptions, setSectorOptions] = useState<string[]>([])
   const [dayOptions, setDayOptions] = useState<string[]>([])
+  const [dayTouched, setDayTouched] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -89,6 +91,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
       if (!resolvedSupabaseUrl || !resolvedSupabaseKey) {
         setError('Configure VITE_SUPABASE_URL e VITE_SUPABASE_KEY para carregar as horas extras.')
         setRows([])
+        setIsLoading(false)
         return
       }
       setIsLoading(true)
@@ -112,6 +115,11 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
           setRows([])
           setError(result.error || 'Erro ao carregar horas extras.')
         }
+      } catch (err) {
+        if (active) {
+          setRows([])
+          setError(err instanceof Error ? err.message : 'Erro ao carregar horas extras.')
+        }
       } finally {
         if (active) setIsLoading(false)
       }
@@ -130,14 +138,6 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
     return Array.from(values).sort((a, b) => Number(a) - Number(b))
   }, [rows])
 
-  const sectorOptions = useMemo(() => {
-    const values = new Set<string>()
-    rows.forEach((r) => {
-      if (r.sector) values.add(r.sector)
-    })
-    return Array.from(values).sort()
-  }, [rows])
-
   const yearOptions = useMemo(() => {
     const values = new Set<string>()
     rows.forEach((r) => {
@@ -151,44 +151,86 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
     const values = new Set<string>()
     rows.forEach((r) => {
       const parts = r.date_?.split('-') || []
+      const year = parts[0]
       const month = parts.length === 3 ? parts[1] : ''
-      if (month) values.add(month)
+      if (month && (!filterYear || year === filterYear)) values.add(month)
     })
     return Array.from(values).sort()
-  }, [rows])
+  }, [rows, filterYear])
 
   useEffect(() => {
-    if (rows.length === 0) return
-    const days = new Set<string>(dayOptions)
+    if (rows.length === 0) {
+      if (dayOptions.length) setDayOptions([])
+      return
+    }
+    const days = new Set<string>()
     rows.forEach((r) => {
       const parts = r.date_?.split('-') || []
-      if (parts.length === 3) days.add(parts[2])
+      if (parts.length === 3) {
+        const [year, month, day] = parts
+        if (filterYear && year !== filterYear) return
+        if (filterMonth && month !== filterMonth) return
+        days.add(day)
+      }
     })
     const merged = Array.from(days).sort()
-    if (merged.length !== dayOptions.length) {
+    if (merged.length !== dayOptions.length || merged.some((d, i) => d !== dayOptions[i])) {
       setDayOptions(merged)
     }
-  }, [rows, dayOptions])
+  }, [rows, dayOptions, filterYear, filterMonth])
 
   useEffect(() => {
-    if (rows.length === 0) return
-    const latestDate = rows.reduce<string | null>((latest, row) => {
-      if (!row.date_) return latest
-      if (!latest || row.date_ > latest) return row.date_
-      return latest
-    }, null)
-    if (!latestDate) return
-    const [latestYear, latestMonth] = latestDate.split('-')
-    if (!filterYear || !yearOptions.includes(filterYear)) {
-      setFilterYear(latestYear)
+    if (rows.length === 0) {
+      if (sectorOptions.length) setSectorOptions([])
+      return
     }
-    if (!filterMonth || !monthOptions.includes(filterMonth)) {
-      setFilterMonth(latestMonth)
+    const sectors = new Set<string>()
+    rows.forEach((r) => {
+      if (r.sector) sectors.add(r.sector)
+    })
+    const merged = Array.from(sectors).sort()
+    if (merged.length !== sectorOptions.length) {
+      setSectorOptions(merged)
     }
+  }, [rows, sectorOptions])
+
+  useEffect(() => {
     if (filterDay && !dayOptions.includes(filterDay)) {
       setFilterDay('')
     }
-  }, [dayOptions, filterDay, filterMonth, filterYear, monthOptions, rows, yearOptions])
+  }, [filterDay, dayOptions])
+
+  useEffect(() => {
+    if (!filterYear && yearOptions.length > 0) {
+      setFilterYear(yearOptions[yearOptions.length - 1])
+    }
+  }, [filterYear, yearOptions])
+
+  useEffect(() => {
+    if (!filterYear) return
+    const monthsForYear = rows
+      .filter((r) => r.date_?.startsWith(`${filterYear}-`))
+      .map((r) => r.date_!.split('-')[1])
+    if (monthsForYear.length === 0) return
+    const uniqueMonths = Array.from(new Set(monthsForYear)).sort()
+    const lastMonth = uniqueMonths[uniqueMonths.length - 1]
+    if (!filterMonth || !uniqueMonths.includes(filterMonth)) {
+      setFilterMonth(lastMonth)
+    }
+  }, [filterYear, filterMonth, rows])
+
+  useEffect(() => {
+    // ao trocar ano ou mês, deixamos o dia ser recalculado
+    setDayTouched(false)
+    setFilterDay('')
+  }, [filterYear, filterMonth])
+
+  useEffect(() => {
+    if (dayTouched) return
+    if (!filterDay && dayOptions.length > 0) {
+      setFilterDay(dayOptions[dayOptions.length - 1])
+    }
+  }, [filterDay, dayOptions, dayTouched])
 
   const filteredRows = useMemo(() => {
     const term = filterText.trim().toLowerCase()
@@ -259,7 +301,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
       return String(valA).localeCompare(String(valB), 'pt-BR', { sensitivity: 'base' }) * dir
     })
     return arr
-  }, [filteredRows, sort])
+  }, [visibleRows, sort])
 
   // Totais base para colunas individuais: usam apenas linhas visíveis (após filtro de dia, se houver)
   const total303 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs303), 0)
@@ -268,7 +310,6 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
   const total506 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs506), 0)
   const total511 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs511), 0)
   const total512 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs512), 0)
-  const hasNameFilter = filterText.trim() !== ''
 
   // Para Hr 60% / Hr 100%: se um dia específico foi selecionado, usamos todas as linhas carregadas (cumulativo do dia 1 até o dia escolhido).
   // Caso contrário, usamos apenas as linhas visíveis.
@@ -307,14 +348,16 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
   }, [filterCompany, rows])
 
   const rowElements = useMemo(() => {
-    if (isLoading && rows.length === 0) {
-      return (
-        <tr>
-          <td colSpan={12} className="px-3 py-4 text-center text-emerald-100">
-            Carregando horas extras...
-          </td>
+    if (isLoading) {
+      return Array.from({ length: 8 }).map((_, idx) => (
+        <tr key={`skeleton-${idx}`} className="animate-pulse">
+          {Array.from({ length: 12 }).map((__, jdx) => (
+            <td key={jdx} className="px-1 py-2">
+              <div className="h-3 bg-white/10 rounded" />
+            </td>
+          ))}
         </tr>
-      )
+      ))
     }
     if (sortedRows.length === 0) {
       return (
@@ -336,7 +379,9 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
         <tr key={`${row.company}-${row.registration}-${row.date_}`} className="odd:bg-white/5">
           <td className="px-1 py-2 text-center">{formatDateDayMonth(row.date_)}</td>
           <td className="px-1 py-2 text-center">{row.registration}</td>
-          <td className="px-1 py-2">{row.name}</td>
+          <td className="px-1 py-2 whitespace-nowrap overflow-hidden text-ellipsis">
+            <span className="block truncate">{row.name}</span>
+          </td>
           <td className="px-1 py-2">{row.sector ? abbreviateSector(row.sector) : '-'}</td>
           <td className="px-1 py-2 text-center">{formatInterval(row.hrs303)}</td>
           <td className="px-1 py-2 text-center">{formatInterval(row.hrs304)}</td>
@@ -349,7 +394,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
         </tr>
       )
     })
-  }, [sortedRows, isLoading, rows.length])
+  }, [sortedRows, isLoading, rows.length, filterDay, cumulativeByRegistration])
 
   const handleSort = (key: typeof sort.key) => {
     setSort((prev) => {
@@ -371,6 +416,19 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
     return dir === 'asc' ? <ArrowDownAZ className={cls} /> : <ArrowDownZA className={cls} />
   }
 
+  const clearTextFilter = () => {
+    setFilterText('')
+    setPendingFilterText('')
+  }
+
+  const applyTextFilter = () => {
+    setFilterCompany('')
+    setFilterSector('')
+    setDayTouched(true)
+    setFilterDay('')
+    setFilterText(pendingFilterText)
+  }
+
   return (
     <div className="space-y-4">
       <div className="bg-white/5 border border-white/10 rounded-lg p-3 shadow-inner shadow-black/10">
@@ -387,7 +445,10 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
             <select
               className="w-28 bg-white/5 text-emerald-200 text-sm border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400/70 focus:ring-1 focus:ring-emerald-400/40 transition"
               value={filterCompany}
-              onChange={(e) => setFilterCompany(e.target.value)}
+              onChange={(e) => {
+                clearTextFilter()
+                setFilterCompany(e.target.value)
+              }}
             >
               <option value="">Empresa</option>
               {companyOptions.map((company) => (
@@ -399,7 +460,10 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
             <select
               className="w-40 bg-white/5 text-emerald-200 text-sm border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400/70 focus:ring-1 focus:ring-emerald-400/40 transition"
               value={filterSector}
-              onChange={(e) => setFilterSector(e.target.value)}
+              onChange={(e) => {
+                clearTextFilter()
+                setFilterSector(e.target.value)
+              }}
             >
               <option value="">Setor</option>
               {sectorOptions.map((sector) => (
@@ -409,31 +473,43 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
               ))}
             </select>
             <select
-              className="w-20 bg-white/5 text-emerald-200 text-sm border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400/70 focus:ring-1 focus:ring-emerald-400/40 transition"
-              value={filterYear}
-              onChange={(e) => setFilterYear(e.target.value)}
-            >
-              {yearOptions.map((year) => (
-                <option key={year} value={year}>
-                  {year}
-                </option>
-              ))}
+            className="w-20 bg-white/5 text-emerald-200 text-sm border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400/70 focus:ring-1 focus:ring-emerald-400/40 transition"
+            value={filterYear}
+            onChange={(e) => {
+              clearTextFilter()
+              setFilterYear(e.target.value)
+            }}
+          >
+            <option value="">Ano</option>
+            {yearOptions.map((year) => (
+              <option key={year} value={year}>
+                {year}
+              </option>
+            ))}
             </select>
             <select
-              className="w-16 bg-white/5 text-emerald-200 text-sm border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400/70 focus:ring-1 focus:ring-emerald-400/40 transition"
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-            >
-              {monthOptions.map((month) => (
-                <option key={month} value={month}>
-                  {month}
-                </option>
-              ))}
+            className="w-16 bg-white/5 text-emerald-200 text-sm border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400/70 focus:ring-1 focus:ring-emerald-400/40 transition"
+            value={filterMonth}
+            onChange={(e) => {
+              clearTextFilter()
+              setFilterMonth(e.target.value)
+            }}
+          >
+            <option value="">Mês</option>
+            {monthOptions.map((month) => (
+              <option key={month} value={month}>
+                {month}
+              </option>
+            ))}
             </select>
             <select
               className="w-16 bg-white/5 text-emerald-200 text-sm border border-white/15 rounded-md px-3 py-2 outline-none focus:border-emerald-400/70 focus:ring-1 focus:ring-emerald-400/40 transition"
               value={filterDay}
-              onChange={(e) => setFilterDay(e.target.value)}
+              onChange={(e) => {
+                clearTextFilter()
+                setDayTouched(true)
+                setFilterDay(e.target.value)
+              }}
             >
               <option value="">Dia</option>
               {dayOptions.map((day) => (
@@ -462,7 +538,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
                 onChange={(e) => setPendingFilterText(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    setFilterText(pendingFilterText)
+                    applyTextFilter()
                   }
                 }}
               />
@@ -471,7 +547,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-emerald-200 hover:text-emerald-100"
                 title="Pesquisar Cadastro ou Nome"
                 aria-label="Aplicar filtro"
-                onClick={() => setFilterText(pendingFilterText)}
+                onClick={applyTextFilter}
               >
                 <Search className="w-5 h-5" />
               </button>
@@ -487,77 +563,77 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
           <div className="flex-1 overflow-y-auto" style={{ scrollbarGutter: 'stable both-edges' }}>
             <table className={`w-full text-[11px] text-white/80 border-collapse table-fixed ${rows.length > 0 ? 'min-h-full' : ''}`}>
               <colgroup>
-                <col className="w-[10%]" />
-                <col className="w-[10%]" />
+                <col className="w-[5%]" />
+                <col className="w-[5%]" />
                 <col className="w-[20%]" />
-                <col className="w-[12%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
+                <col className="w-[10%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
                 <col className="w-[8%]" />
                 <col className="w-[8%]" />
               </colgroup>
               <thead className="bg-green-800 text-[11px] uppercase tracking-[0.2em] text-white/70 sticky top-0 z-10 backdrop-blur">
                 <tr>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-left flex items-center justify-center" onClick={() => handleSort('date')}>
-                      Data {renderSortIcon('date')}
+                      DT {renderSortIcon('date')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-left flex items-center justify-center" onClick={() => handleSort('registration')}>
-                      Cad. {renderSortIcon('registration')}
+                      Cad {renderSortIcon('registration')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-left">
+                  <th className="py-2 text-left">
                     <button type="button" className="w-full text-left flex items-center" onClick={() => handleSort('name')}>
                       Nome {renderSortIcon('name')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-left">
+                  <th className="py-2 text-left">
                     <button type="button" className="w-full text-left flex items-center" onClick={() => handleSort('sector')}>
                       Setor {renderSortIcon('sector')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-center flex items-center justify-center" onClick={() => handleSort('hrs303')}>
                       303 {renderSortIcon('hrs303')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-center flex items-center justify-center" onClick={() => handleSort('hrs304')}>
                       304 {renderSortIcon('hrs304')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-center flex items-center justify-center" onClick={() => handleSort('hrs505')}>
                       505 {renderSortIcon('hrs505')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-center flex items-center justify-center" onClick={() => handleSort('hrs506')}>
                       506 {renderSortIcon('hrs506')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-center flex items-center justify-center" onClick={() => handleSort('hrs511')}>
                       511 {renderSortIcon('hrs511')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-center">
                     <button type="button" className="w-full text-center flex items-center justify-center" onClick={() => handleSort('hrs512')}>
                       512 {renderSortIcon('hrs512')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-xs text-center">
                     <button type="button" className="w-full text-orange-500 text-center flex items-center justify-center" onClick={() => handleSort('hrs60')}>
                       Hr 60% {renderSortIcon('hrs60')}
                     </button>
                   </th>
-                  <th className="px-1 py-2 text-center">
+                  <th className="py-2 text-xs text-center">
                     <button type="button" className="w-full text-rose-500 text-center flex items-center justify-center" onClick={() => handleSort('hrs100')}>
                       Hr 100% {renderSortIcon('hrs100')}
                     </button>
@@ -570,33 +646,33 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
           <div className="bg-green-800 text-[11px] uppercase tracking-[0.2em] text-white/70 backdrop-blur">
             <table className="w-full text-[11px] text-white/80 border-collapse table-fixed">
               <colgroup>
-                <col className="w-[10%]" />
-                <col className="w-[10%]" />
+                <col className="w-[5%]" />
+                <col className="w-[5%]" />
                 <col className="w-[20%]" />
-                <col className="w-[12%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
-                <col className="w-[6%]" />
+                <col className="w-[10%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
                 <col className="w-[8%]" />
                 <col className="w-[8%]" />
               </colgroup>
               <tbody>
                 <tr>
-                  <td className="px-1 py-2 text-center">-</td>
-                  <td className="px-1 py-2 text-center">-</td>
-                  <td className="px-1 py-2 text-left">Registros:<span className="text-emerald-200 font-semibold">{totalRows}</span></td>
-                  <td className="px-1 py-2 text-center">-</td>
-                  <td className="px-1 py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total303)}</td>
-                  <td className="px-1 py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total304)}</td>
-                  <td className="px-1 py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total505)}</td>
-                  <td className="px-1 py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total506)}</td>
-                  <td className="px-1 py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total511)}</td>
-                  <td className="px-1 py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total512)}</td>
-                  <td className="px-1 py-2 text-center text-orange-500 font-semibold">{formatMinutes(totalHrs60)}</td>
-                  <td className="px-1 py-2 text-center text-rose-500 font-semibold">{formatMinutes(totalHrs100)}</td>
+                  <td className="py-2 text-center">-</td>
+                  <td className="py-2 text-center">-</td>
+                  <td className="py-2 text-left">Registros:<span className="text-emerald-200 font-semibold">{totalRows}</span></td>
+                  <td className="py-2 text-center">-</td>
+                  <td className="py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total303)}</td>
+                  <td className="py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total304)}</td>
+                  <td className="py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total505)}</td>
+                  <td className="py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total506)}</td>
+                  <td className="py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total511)}</td>
+                  <td className="py-2 text-center text-emerald-200 font-semibold">{formatMinutes(total512)}</td>
+                  <td className="py-2 text-xs text-center text-orange-500 font-semibold">{formatMinutes(totalHrs60)}</td>
+                  <td className="py-2 text-xs text-center text-rose-500 font-semibold">{formatMinutes(totalHrs100)}</td>
                 </tr>
               </tbody>
             </table>
