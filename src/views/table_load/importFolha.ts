@@ -1,5 +1,5 @@
 import { checkPayrollMonthExists } from '../../services/payrollService'
-import type { RowError, SheetData } from '../Table_load'
+import type { SheetData } from '../Table_load'
 import type { Action } from '../Table_load'
 
 const getRefMonthYear = (value: any): string => {

@@ -282,30 +282,6 @@ const getRefFullDate = (value: any): string => {
   return `${padNumber(d.getDate())}/${padNumber(d.getMonth() + 1)}/${d.getFullYear()}`
 }
 
-const formatIsoDateDisplay = (iso?: string): string => {
-  if (!iso) return ''
-  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    const [y, m, d] = iso.split('-')
-    return `${d}/${m}/${y}`
-  }
-  return getRefFullDate(iso)
-}
-
-const extractRegistrationNumbers = (jsonData: SheetData): number[] => {
-  const registrationSet = new Set<number>()
-  jsonData.forEach(row => {
-    const cadastroKey = Object.keys(row).find((k) => k.toLowerCase() === 'cadastro')
-    const rawValue = cadastroKey ? row[cadastroKey] : row['cadastro']
-    if (rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== '') {
-      const num = Number(String(rawValue).replace(/\D/g, ''))
-      if (!Number.isNaN(num) && num > 0) {
-        registrationSet.add(num)
-      }
-    }
-  })
-  return Array.from(registrationSet)
-}
-
 const formatDateFromDb = (value?: string | null) => {
   if (!value) return '-'
   const date = new Date(value)
@@ -313,39 +289,6 @@ const formatDateFromDb = (value?: string | null) => {
   return `${padNumber(date.getDate())}/${padNumber(date.getMonth() + 1)}/${date.getFullYear()} ${padNumber(date.getHours())}:${padNumber(
     date.getMinutes()
   )}`
-}
-
-const formatTimePreview = (val: any): string => {
-  if (val === null || val === undefined || val === '') return '-'
-
-  const pad = (n: number) => String(n).padStart(2, '0')
-
-  // Numero vindo do Excel: 0-1 é fração do dia, >1 são dias (26h => 1.0833 dia)
-  if (typeof val === 'number') {
-    const totalHours = val * 24
-    const hours = Math.floor(totalHours)
-    const minutes = Math.floor((totalHours - hours) * 60)
-    return `${hours}:${pad(minutes)}`
-  }
-
-  const raw = String(val).trim()
-  if (!raw) return '-'
-
-  const colonMatch = raw.match(/^(\d{1,3}):(\d{1,2})(?::(\d{1,2}))?$/)
-  if (colonMatch) {
-    const [, h, m] = colonMatch
-    return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`
-  }
-
-  const decimal = Number(raw.replace(',', '.'))
-  if (!Number.isNaN(decimal)) {
-    const totalSeconds = Math.round(decimal * 3600)
-    const hours = Math.floor(totalSeconds / 3600)
-    const minutes = Math.floor((totalSeconds % 3600) / 60)
-    return `${hours}:${pad(minutes)}`
-  }
-
-  return raw
 }
 
 const TableLoad: React.FC<TableLoadProps> = ({
@@ -651,6 +594,9 @@ const TableLoad: React.FC<TableLoadProps> = ({
                 : getRefMonthYear(transformed.competence) || transformed.competence)
               : ''
             pushMessage(`OoO Transformacao da folha pronta (${transformed.rows.length} linha(s)).`)
+            if (competenceDisplay) {
+              pushMessage(`Competencia: ${competenceDisplay}`)
+            }
           }
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : 'Falha ao transformar folha.'

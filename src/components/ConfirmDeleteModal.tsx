@@ -86,8 +86,6 @@ const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
                 data-1p-ignore="true"
                 formNoValidate
                 spellCheck={false}
-                data-lpignore="true"
-                data-1p-ignore="true"
                 className={`neutralize-autofill w-full bg-white/5 text-white text-sm border rounded-lg px-3 py-2.5 outline-none focus:border-emerald-400 ${
                   passwordError ? 'border-rose-400' : 'border-white/10'
                 }`}
