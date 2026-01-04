@@ -38,3 +38,17 @@ export interface OvertimeDeleteResult {
   deleted: number
   error?: string
 }
+
+export interface OvertimeSummaryRow {
+  company: number | null
+  date_: string
+  registration: number
+  name: string
+  sector: string | null
+  hrs303: string | null
+  hrs304: string | null
+  hrs505: string | null
+  hrs506: string | null
+  hrs511: string | null
+  hrs512: string | null
+}

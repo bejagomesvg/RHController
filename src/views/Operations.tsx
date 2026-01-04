@@ -6,12 +6,14 @@ import {
   Clock3,
   CalendarX2,
   Factory,
+  Clock10,
 } from 'lucide-react'
 import OperationsOvertimePanel from './operations/OperationsOvertimePanel'
 import OperationsFaltasPanel from './operations/OperationsFaltasPanel'
 import OperationsProducaoPanel from './operations/OperationsProducaoPanel'
 import OperationsAlertsPanel from './operations/OperationsAlertsPanel'
 import OperationsConfigPanel from './operations/OperationsConfigPanel'
+import OperationsTimePanel from './operations/OperationsTimePanel'
 
 interface OperationsProps {
   onBack: () => void
@@ -25,6 +27,7 @@ interface OperationsProps {
 
 const sidebarItems = [
   { key: 'faltas', label: 'Faltas', icon: CalendarX2 },
+  { key: 'time', label: 'Time', icon: Clock10 },
   { key: 'overtime', label: 'Horas Extras', icon: Clock3 },
   { key: 'producao', label: 'Producao', icon: Factory },
   { key: 'alerts', label: 'Alerta', icon: Bell },
@@ -108,6 +111,7 @@ const Operations: React.FC<OperationsProps> = ({ onBack, userName, userRole, tit
           {active === 'producao' && <OperationsProducaoPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
           {active === 'alerts' && <OperationsAlertsPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
           {active === 'config' && <OperationsConfigPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
+          {active === 'time' && <OperationsTimePanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
         </div>
       </div>
     </div>

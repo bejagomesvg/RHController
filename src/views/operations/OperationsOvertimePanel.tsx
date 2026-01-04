@@ -259,6 +259,7 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
   const [availableDays, setAvailableDays] = useState<string[]>([])
   const [showTable, setShowTable] = useState(false)
   const [rows, setRows] = useState<OvertimeRow[]>([])
+  const [rawRows, setRawRows] = useState<OvertimeRow[]>([])
   const [salaryByRegistration, setSalaryByRegistration] = useState<Record<string, number>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -523,6 +524,8 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
       try {
         setIsLoading(true)
         setError(null)
+        const DBG_ONLY = '204575'
+        const showDbg = () => String(filterText ?? '').trim() === DBG_ONLY
 
         const url = new URL(`${supabaseUrl}/rest/v1/overtime`)
         url.searchParams.set('select', 'id,registration,name,date_,hrs303,hrs304,hrs505,hrs506,hrs511,hrs512')
@@ -539,42 +542,178 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
 
         const baseUrl = url.toString()
         const overtimeData: any[] = []
-        let from = 0
-        let totalFromHeader: number | null = null
+        const numericNeedle = /^\d+$/.test(needle)
 
-        while (from < MAX_OVERTIME_ROWS && (totalFromHeader === null || from < totalFromHeader)) {
-          const to = Math.min(from + PAGE_SIZE - 1, MAX_OVERTIME_ROWS - 1)
+        if (numericNeedle) {
+          // When searching by numeric registration, request all matching rows
+          // in a single call (no Range header). This avoids potential issues
+          // where paged Range requests drop rows on the backend.
           const res = await fetch(baseUrl, {
             headers: {
               apikey: supabaseKey,
               Authorization: `Bearer ${supabaseKey}`,
-              Range: `${from}-${to}`,
               Prefer: 'count=exact',
             },
           })
-
           if (!res.ok) {
             throw new Error((await res.text()) || 'Erro ao buscar horas extras')
           }
-
           const pageData = await res.json()
           overtimeData.push(...pageData)
+        } else {
+          let from = 0
+          let totalFromHeader: number | null = null
+          while (from < MAX_OVERTIME_ROWS && (totalFromHeader === null || from < totalFromHeader)) {
+            const to = Math.min(from + PAGE_SIZE - 1, MAX_OVERTIME_ROWS - 1)
+            const res = await fetch(baseUrl, {
+              headers: {
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+                Range: `${from}-${to}`,
+                Prefer: 'count=exact',
+              },
+            })
 
-          const contentRange = res.headers.get('content-range')
-          if (contentRange) {
-            const [, totalStr] = contentRange.split('/') || []
-            const totalNum = Number(totalStr)
-            totalFromHeader = Number.isFinite(totalNum) ? totalNum : null
-          }
+            if (!res.ok) {
+              throw new Error((await res.text()) || 'Erro ao buscar horas extras')
+            }
 
-          if (pageData.length < PAGE_SIZE) {
-            break
+            const pageData = await res.json()
+            overtimeData.push(...pageData)
+
+            const contentRange = res.headers.get('content-range')
+            if (contentRange) {
+              const [, totalStr] = contentRange.split('/') || []
+              const totalNum = Number(totalStr)
+              totalFromHeader = Number.isFinite(totalNum) ? totalNum : null
+            }
+
+            if (pageData.length < PAGE_SIZE) {
+              break
+            }
+            from += PAGE_SIZE
           }
-          from += PAGE_SIZE
         }
+        // Deduplicate fetched overtime rows by `id` to avoid counting the same
+        // database record multiple times (can happen when using paged requests).
+        // If search is numeric, ensure we explicitly request all rows for
+        // that registration once more to avoid any backend pagination/Range
+        // oddities that could drop rows.
+        try {
+          const needleExplicit = filterText.trim()
+          if (/^\d+$/.test(needleExplicit)) {
+            try {
+              const regUrl = new URL(`${supabaseUrl}/rest/v1/overtime`)
+              regUrl.searchParams.set('select', 'id,registration,name,date_,hrs303,hrs304,hrs505,hrs506,hrs511,hrs512')
+              regUrl.searchParams.set('registration', `eq.${needleExplicit}`)
+              regUrl.searchParams.set('order', 'date_.desc')
+              const regRes = await fetch(regUrl.toString(), {
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  Prefer: 'count=exact',
+                },
+              })
+              if (regRes.ok) {
+                const regData = await regRes.json()
+                overtimeData.push(...regData)
+                // eslint-disable-next-line no-console
+                if (showDbg()) console.debug('[OVERTIME-DBG] explicit registration fetch appended count=', regData.length, 'registration=', needleExplicit, 'ids=', regData.map((r: any) => r.id))
+              }
+            } catch (e) {
+              // ignore explicit fetch errors
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        const uniqueOvertimeByIdMap = new Map<string, any>()
+        overtimeData.forEach((r: any) => {
+          const key = `${String(r.id ?? '')}|${String(r.date_ ?? '')}|${String(r.registration ?? '')}`
+          if (!uniqueOvertimeByIdMap.has(key)) {
+            uniqueOvertimeByIdMap.set(key, r)
+          }
+        })
+
+        // Se a busca for por cadastro numérico, garantir com uma fetch
+        // direta por `registration` (o valor pesquisado) para recuperar
+        // lançamentos que possam ter sido perdidos por paginação/Range.
+        try {
+          const needleDbg = filterText.trim()
+          if (/^\d+$/.test(needleDbg)) {
+            // Fetch direto por registration pesquisado (assegura inclusão)
+            try {
+              const urlDirect = new URL(`${supabaseUrl}/rest/v1/overtime`)
+              urlDirect.searchParams.set('select', 'id,registration,name,date_,hrs303,hrs304,hrs505,hrs506,hrs511,hrs512')
+              urlDirect.searchParams.set('registration', `eq.${needleDbg}`)
+              const resDirect = await fetch(urlDirect.toString(), {
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  Prefer: 'count=exact',
+                },
+              })
+              if (resDirect.ok) {
+                const pageData = await resDirect.json()
+                pageData.forEach((r: any) => {
+                  const key = `${String(r.id ?? '')}|${String(r.date_ ?? '')}|${String(r.registration ?? '')}`
+                  if (!uniqueOvertimeByIdMap.has(key)) uniqueOvertimeByIdMap.set(key, r)
+                })
+              }
+            } catch (e) {
+              // ignore direct fetch errors
+            }
+
+            const regs = Array.from(new Set(overtimeData.map((r: any) => r.registration).filter((x: any) => x !== null && x !== undefined)))
+            for (const reg of regs) {
+              try {
+                const urlReg = new URL(`${supabaseUrl}/rest/v1/overtime`)
+                urlReg.searchParams.set('select', 'id,registration,name,date_,hrs303,hrs304,hrs505,hrs506,hrs511,hrs512')
+                urlReg.searchParams.set('registration', `eq.${reg}`)
+                const resReg = await fetch(urlReg.toString(), {
+                  headers: {
+                    apikey: supabaseKey,
+                    Authorization: `Bearer ${supabaseKey}`,
+                    Prefer: 'count=exact',
+                  },
+                })
+                if (resReg.ok) {
+                  const pageData = await resReg.json()
+                  pageData.forEach((r: any) => {
+                    const key = `${String(r.id ?? '')}|${String(r.date_ ?? '')}|${String(r.registration ?? '')}`
+                    if (!uniqueOvertimeByIdMap.has(key)) uniqueOvertimeByIdMap.set(key, r)
+                  })
+                }
+              } catch (e) {
+                // ignore per-reg fetch errors
+              }
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        const uniqueOvertime = Array.from(uniqueOvertimeByIdMap.values())
+
+        // DEBUG: log unique fetched records for the current name/registration filter
+        try {
+          const needleDbg = filterText.trim()
+          if (/^\d+$/.test(needleDbg)) {
+            const rowsForReg = uniqueOvertime.filter((r: any) => String(r.registration) === needleDbg)
+            // eslint-disable-next-line no-console
+            if (showDbg()) {
+              console.debug('[OVERTIME-DBG] uniqueOvertime count=', uniqueOvertime.length, 'rowsForReg count=', rowsForReg.length, 'rowsForReg=', rowsForReg.map((r: any) => ({ id: r.id, date: r.date_ })))
+              console.debug('[OVERTIME-DBG] uniqueOvertime ids=', rowsForReg.map((r: any) => String(r.id)))
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
         const registrations = Array.from(
           new Set(
-            overtimeData
+            uniqueOvertime
               .map((row: any) => row.registration)
               .filter((reg: any) => reg !== null && reg !== undefined),
           ),
@@ -608,7 +747,7 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
           }
         }
 
-        const mappedRows: OvertimeRow[] = overtimeData.map((row: any) => {
+        let mappedRows: OvertimeRow[] = uniqueOvertime.map((row: any) => {
           const registration = row.registration === null || row.registration === undefined ? '' : String(row.registration)
           const employee = employees[registration]
           const hrs303Minutes = parseIntervalMinutes(row.hrs303)
@@ -664,6 +803,181 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
           }
         })
 
+        // Fallback: se algum registro bruto de `uniqueOvertime` não foi mapeado
+        // (p.ex. por dedupe ou formato inesperado), mapeie e anexe aqui.
+        try {
+          const mappedById = new Map<string, OvertimeRow>(mappedRows.map((r) => [String(r.id), r]))
+          const missing = uniqueOvertime.filter((r: any) => !mappedById.has(String(r.id)))
+          if (missing.length > 0) {
+            const extraMapped = missing.map((row: any) => {
+              const registration = row.registration === null || row.registration === undefined ? '' : String(row.registration)
+              const employee = employees[registration]
+              const hrs303Minutes = parseIntervalMinutes(row.hrs303)
+              const hrs304Minutes = parseIntervalMinutes(row.hrs304)
+              const hrs505Minutes = parseIntervalMinutes(row.hrs505)
+              const hrs506Minutes = parseIntervalMinutes(row.hrs506)
+              const hrs511Minutes = parseIntervalMinutes(row.hrs511)
+              const hrs512Minutes = parseIntervalMinutes(row.hrs512)
+              const plus60Minutes = hrs505Minutes + hrs506Minutes
+              const minus60Minutes = hrs511Minutes + hrs512Minutes
+              const plus100Minutes = hrs303Minutes + hrs304Minutes
+              const hours60Minutes = plus60Minutes - minus60Minutes
+              const sectorOriginal = employee?.sector ?? null
+              const sectorLabel = abbreviateSector(sectorOriginal)
+              const salary = employee?.salary ?? 0
+              return {
+                id: row.id ? String(row.id) : `${registration}-${row.date_ ?? ''}`,
+                dateIso: row.date_ ?? '',
+                date: formatDateBr(row.date_),
+                dateShort: formatDateDayMonth(row.date_),
+                company: employee?.company ?? '-',
+                companyValue: Number(employee?.company) || 0,
+                companyLabel: formatCompanyLabel(employee?.company ?? '-'),
+                registration: registration || '-',
+                registrationValue: Number(registration) || 0,
+                name: row.name ?? '-',
+                sector: sectorLabel,
+                sectorOriginal,
+                salary,
+                hrs303: formatMinutes(hrs303Minutes),
+                hrs304: formatMinutes(hrs304Minutes),
+                hrs505: formatMinutes(hrs505Minutes),
+                hrs506: formatMinutes(hrs506Minutes),
+                hrs511: formatMinutes(hrs511Minutes),
+                hrs512: formatMinutes(hrs512Minutes),
+                plus60: formatMinutes(plus60Minutes),
+                minus60: formatMinutes(minus60Minutes),
+                plus100: formatMinutes(plus100Minutes),
+                hours60: formatMinutes(hours60Minutes),
+                hours100: formatMinutes(plus100Minutes),
+                plus60Minutes,
+                minus60Minutes,
+                plus100Minutes,
+                hours60Minutes,
+                hours100Minutes: plus100Minutes,
+                hrs303Minutes,
+                hrs304Minutes,
+                hrs505Minutes,
+                hrs506Minutes,
+                hrs511Minutes,
+                hrs512Minutes,
+              } as OvertimeRow
+            })
+            mappedRows = mappedRows.concat(extraMapped)
+            // eslint-disable-next-line no-console
+            if (showDbg()) console.debug('[OVERTIME-DBG] appended missing mapped rows count=', missing.length, 'ids=', missing.map((m: any) => m.id))
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // DEBUG: mostrar os registros já mapeados (id, dateIso, registration, company)
+        try {
+          // eslint-disable-next-line no-console
+          if (showDbg()) console.debug('[OVERTIME-DBG] mappedRows count=', mappedRows.length, 'ids=', mappedRows.map((r) => ({ id: r.id, date: r.dateIso, registration: r.registration, company: r.company })))
+          const needleDbg = filterText.trim()
+          if (/^\d+$/.test(needleDbg)) {
+            const mustId = '5858'
+            const found = mappedRows.find((m) => String(m.id) === String(mustId))
+            // eslint-disable-next-line no-console
+            if (showDbg()) console.debug('[OVERTIME-DBG] mappedRows contains id 5858?', !!found, found ? { id: found.id, date: found.dateIso, registration: found.registration } : null)
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // Extra safeguard: se a busca for por cadastro numérico, realizar
+        // uma fetch explícita por esse `registration` e anexar quaisquer
+        // linhas não presentes em `mappedRows` (diagnóstico para IDs perdidos).
+        try {
+          const needleExplicit = filterText.trim()
+          if (/^\d+$/.test(needleExplicit)) {
+            const regUrl = new URL(`${supabaseUrl}/rest/v1/overtime`)
+            regUrl.searchParams.set('select', 'id,registration,name,date_,hrs303,hrs304,hrs505,hrs506,hrs511,hrs512')
+            regUrl.searchParams.set('registration', `eq.${needleExplicit}`)
+            regUrl.searchParams.set('order', 'date_.desc')
+            const regRes = await fetch(regUrl.toString(), {
+              headers: {
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+                Prefer: 'count=exact',
+              },
+            })
+            if (regRes.ok) {
+              const regRows = await regRes.json()
+              const mappedIdsSet = new Set(mappedRows.map((m) => String(m.id)))
+              const missing = regRows.filter((r: any) => !mappedIdsSet.has(String(r.id)))
+              if (missing.length > 0) {
+                const extraMapped = missing.map((row: any) => {
+                  const registration = row.registration === null || row.registration === undefined ? '' : String(row.registration)
+                  const employee = (employees && employees[registration]) || undefined
+                  const hrs303Minutes = parseIntervalMinutes(row.hrs303)
+                  const hrs304Minutes = parseIntervalMinutes(row.hrs304)
+                  const hrs505Minutes = parseIntervalMinutes(row.hrs505)
+                  const hrs506Minutes = parseIntervalMinutes(row.hrs506)
+                  const hrs511Minutes = parseIntervalMinutes(row.hrs511)
+                  const hrs512Minutes = parseIntervalMinutes(row.hrs512)
+                  const plus60Minutes = hrs505Minutes + hrs506Minutes
+                  const minus60Minutes = hrs511Minutes + hrs512Minutes
+                  const plus100Minutes = hrs303Minutes + hrs304Minutes
+                  const hours60Minutes = plus60Minutes - minus60Minutes
+                  const sectorOriginal = employee?.sector ?? null
+                  const sectorLabel = abbreviateSector(sectorOriginal)
+                  const salary = employee?.salary ?? 0
+                  return {
+                    id: row.id ? String(row.id) : `${registration}-${row.date_ ?? ''}`,
+                    dateIso: row.date_ ?? '',
+                    date: formatDateBr(row.date_),
+                    dateShort: formatDateDayMonth(row.date_),
+                    company: employee?.company ?? '-',
+                    companyValue: Number(employee?.company) || 0,
+                    companyLabel: formatCompanyLabel(employee?.company ?? '-'),
+                    registration: registration || '-',
+                    registrationValue: Number(registration) || 0,
+                    name: row.name ?? '-',
+                    sector: sectorLabel,
+                    sectorOriginal,
+                    salary,
+                    hrs303: formatMinutes(hrs303Minutes),
+                    hrs304: formatMinutes(hrs304Minutes),
+                    hrs505: formatMinutes(hrs505Minutes),
+                    hrs506: formatMinutes(hrs506Minutes),
+                    hrs511: formatMinutes(hrs511Minutes),
+                    hrs512: formatMinutes(hrs512Minutes),
+                    plus60: formatMinutes(plus60Minutes),
+                    minus60: formatMinutes(minus60Minutes),
+                    plus100: formatMinutes(plus100Minutes),
+                    hours60: formatMinutes(hours60Minutes),
+                    hours100: formatMinutes(plus100Minutes),
+                    plus60Minutes,
+                    minus60Minutes,
+                    plus100Minutes,
+                    hours60Minutes,
+                    hours100Minutes: plus100Minutes,
+                    hrs303Minutes,
+                    hrs304Minutes,
+                    hrs505Minutes,
+                    hrs506Minutes,
+                    hrs511Minutes,
+                    hrs512Minutes,
+                  } as OvertimeRow
+                })
+                mappedRows = mappedRows.concat(extraMapped)
+                // eslint-disable-next-line no-console
+                if (showDbg()) console.debug('[OVERTIME-DBG] explicit registration fetch appended to mappedRows ids=', missing.map((m: any) => m.id))
+              } else {
+                // eslint-disable-next-line no-console
+                if (showDbg()) console.debug('[OVERTIME-DBG] explicit registration fetch found no new ids, count=', regRows.length)
+              }
+            } else {
+                // eslint-disable-next-line no-console
+                if (showDbg()) console.debug('[OVERTIME-DBG] explicit registration fetch failed status=', regRes.status)
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
         const companiesSet = new Set<string>()
         const sectorsSet = new Set<string>()
         const yearsSet = new Set<string>()
@@ -690,17 +1004,35 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
         setAvailableDays(Array.from(daysSet).sort((a, b) => Number(a) - Number(b)))
 
         const filteredRows = mappedRows.filter((row) => {
-          const matchCompany = filterCompany ? String(row.companyValue) === filterCompany : true
-          const matchSector = filterSector ? row.sectorOriginal === filterSector : true
+          const needle = filterText.trim()
+          const numericNeedle = /^\d+$/.test(needle)
+          // If user searched by numeric registration, ignore other filters (company/sector/day/month/year)
+          const matchCompany = numericNeedle ? true : filterCompany ? String(row.companyValue) === filterCompany : true
+          const matchSector = numericNeedle ? true : filterSector ? row.sectorOriginal === filterSector : true
           const hasDate = row.dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/)
           const yearVal = hasDate ? hasDate[1] : null
           const monthVal = hasDate ? hasDate[2] : null
           const dayVal = hasDate ? hasDate[3] : null
-          const matchYear = filterYear ? yearVal === filterYear : true
-          const matchMonth = filterMonth ? monthVal === filterMonth : true
-          const matchDay = filterDay ? dayVal === filterDay : true
+          const matchYear = numericNeedle ? true : filterYear ? yearVal === filterYear : true
+          const matchMonth = numericNeedle ? true : filterMonth ? monthVal === filterMonth : true
+          const matchDay = numericNeedle ? true : filterDay ? dayVal === filterDay : true
           return matchCompany && matchSector && matchYear && matchMonth && matchDay
         })
+
+        // Preserve the ungrouped, daily rows so totals can always be computed from
+        // the actual daily entries even when `rows` is later grouped by registration.
+        try {
+          const needleDbg = filterText.trim()
+          if (/^\d+$/.test(needleDbg)) {
+            const rowsInMapped = mappedRows.filter((m) => String(m.registration) === needleDbg)
+            const rowsInFiltered = filteredRows.filter((f) => String(f.registration) === needleDbg)
+            // eslint-disable-next-line no-console
+            if (showDbg()) console.debug('[OVERTIME-DBG] compare mapped vs filtered for reg=', needleDbg, 'mappedCount=', rowsInMapped.length, 'filteredCount=', rowsInFiltered.length, 'mappedIds=', rowsInMapped.map((r) => ({ id: r.id, date: r.dateIso })), 'filteredIds=', rowsInFiltered.map((r) => ({ id: r.id, date: r.dateIso })))
+          }
+        } catch (e) {
+          // ignore
+        }
+        setRawRows(filteredRows)
 
         const finalRows = filterDay || filterText
           ? filteredRows
@@ -731,7 +1063,95 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
                 maxDate: string | null
               }
             >()
-            filteredRows.forEach((row) => {
+            // Fallback: além de `filteredRows`, inclua também quaisquer linhas
+            // já mapeadas (`mappedRows`) que pertençam aos mesmos `registration`
+            // presentes em `filteredRows` mas que por algum motivo não chegaram
+            // à lista final (evita perder linhas como a de 16/12).
+            const isNumericSearch = /^\d+$/.test(filterText.trim())
+            let rowsToGroup: OvertimeRow[] = []
+            if (isNumericSearch) {
+              // For numeric registration search, map directly from `uniqueOvertime`
+              // for that registration to ensure no raw rows are missed.
+              const needleReg = filterText.trim()
+              const mapRawToOvertimeRow = (row: any): OvertimeRow => {
+                const registration = row.registration === null || row.registration === undefined ? '' : String(row.registration)
+                const employee = employees[registration]
+                const hrs303Minutes = parseIntervalMinutes(row.hrs303)
+                const hrs304Minutes = parseIntervalMinutes(row.hrs304)
+                const hrs505Minutes = parseIntervalMinutes(row.hrs505)
+                const hrs506Minutes = parseIntervalMinutes(row.hrs506)
+                const hrs511Minutes = parseIntervalMinutes(row.hrs511)
+                const hrs512Minutes = parseIntervalMinutes(row.hrs512)
+                const plus60Minutes = hrs505Minutes + hrs506Minutes
+                const minus60Minutes = hrs511Minutes + hrs512Minutes
+                const plus100Minutes = hrs303Minutes + hrs304Minutes
+                const hours60Minutes = plus60Minutes - minus60Minutes
+                const sectorOriginal = employee?.sector ?? null
+                const sectorLabel = abbreviateSector(sectorOriginal)
+                const salary = employee?.salary ?? 0
+                return {
+                  id: row.id ? String(row.id) : `${registration}-${row.date_ ?? ''}`,
+                  dateIso: row.date_ ?? '',
+                  date: formatDateBr(row.date_),
+                  dateShort: formatDateDayMonth(row.date_),
+                  company: employee?.company ?? '-',
+                  companyValue: Number(employee?.company) || 0,
+                  companyLabel: formatCompanyLabel(employee?.company ?? '-'),
+                  registration: registration || '-',
+                  registrationValue: Number(registration) || 0,
+                  name: row.name ?? '-',
+                  sector: sectorLabel,
+                  sectorOriginal,
+                  salary,
+                  hrs303: formatMinutes(hrs303Minutes),
+                  hrs304: formatMinutes(hrs304Minutes),
+                  hrs505: formatMinutes(hrs505Minutes),
+                  hrs506: formatMinutes(hrs506Minutes),
+                  hrs511: formatMinutes(hrs511Minutes),
+                  hrs512: formatMinutes(hrs512Minutes),
+                  plus60: formatMinutes(plus60Minutes),
+                  minus60: formatMinutes(minus60Minutes),
+                  plus100: formatMinutes(plus100Minutes),
+                  hours60: formatMinutes(hours60Minutes),
+                  hours100: formatMinutes(plus100Minutes),
+                  plus60Minutes,
+                  minus60Minutes,
+                  plus100Minutes,
+                  hours60Minutes,
+                  hours100Minutes: plus100Minutes,
+                  hrs303Minutes,
+                  hrs304Minutes,
+                  hrs505Minutes,
+                  hrs506Minutes,
+                  hrs511Minutes,
+                  hrs512Minutes,
+                }
+              }
+              rowsToGroup = uniqueOvertime
+                .filter((u: any) => String(u.registration) === needleReg)
+                .map((u: any) => mapRawToOvertimeRow(u))
+            } else {
+              // Build rowsToGroup as a union of `filteredRows` and `mappedRows`,
+              // deduplicated by `id`, preserving `filteredRows` ordering.
+              const rowsToGroupMap = new Map<string, OvertimeRow>()
+              filteredRows.forEach((r) => rowsToGroupMap.set(String(r.id), r))
+              mappedRows.forEach((m) => {
+                if (!rowsToGroupMap.has(String(m.id))) rowsToGroupMap.set(String(m.id), m)
+              })
+              rowsToGroup = Array.from(rowsToGroupMap.values())
+            }
+            try {
+              const dbgId = '204575'
+              const mappedIds = mappedRows.filter((m) => String(m.registration) === dbgId).map((m) => String(m.id))
+              const filteredIds = filteredRows.filter((f) => String(f.registration) === dbgId).map((f) => String(f.id))
+              const rowsToGroupIds = rowsToGroup.filter((r) => String(r.registration) === dbgId).map((r) => String(r.id))
+              // eslint-disable-next-line no-console
+              if (showDbg()) console.debug('[OVERTIME-DBG] id=', dbgId, 'mappedIds=', mappedIds.length, mappedIds, 'filteredIds=', filteredIds.length, filteredIds, 'rowsToGroupIds=', rowsToGroupIds.length, rowsToGroupIds)
+            } catch (e) {
+              // ignore
+            }
+
+            rowsToGroup.forEach((row) => {
               const current = grouped.get(row.registration) ?? {
                 registration: row.registration,
                 name: row.name,
@@ -759,8 +1179,9 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
               current.plus60Minutes += row.plus60Minutes
               current.minus60Minutes += row.minus60Minutes
               current.plus100Minutes += row.plus100Minutes
-              current.hours60Minutes += row.hours60Minutes
-              current.hours100Minutes += row.hours100Minutes
+              // não acumular `hours60Minutes`/`hours100Minutes` aqui — iremos
+              // calcular o saldo (net) a partir de `plus60Minutes` e `minus60Minutes`
+              // quando formos mapear para a linha agrupada.
               current.hrs303Minutes += row.hrs303Minutes
               current.hrs304Minutes += row.hrs304Minutes
               current.hrs505Minutes += row.hrs505Minutes
@@ -776,8 +1197,69 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
               grouped.set(row.registration, current)
             })
 
+            // Diagnostic logging for a specific registration to help debug
+            // discrepancies between daily sums and grouped sums. Use
+            // `rowsToGroup` (os dados efetivamente agrupados) em vez de
+            // `filteredRows` para evitar confusão quando incluímos linhas
+            // extras no fallback.
+            try {
+              const dbgIds = ['202079', '204575']
+              dbgIds.forEach((dbgId) => {
+                const rowsForDbg = rowsToGroup.filter((r) => String(r.registration) === dbgId)
+                if (rowsForDbg.length > 0) {
+                  const sumDaily = rowsForDbg.reduce((acc, r) => acc + (r.hours60Minutes ?? r.plus60Minutes ?? 0), 0)
+                  const sumPlus60 = rowsForDbg.reduce((acc, r) => acc + (r.plus60Minutes ?? 0), 0)
+                  const sumMinus60 = rowsForDbg.reduce((acc, r) => acc + (r.minus60Minutes ?? 0), 0)
+                  // eslint-disable-next-line no-console
+                  if (showDbg() || dbgId === '204575') console.debug('[OVERTIME-DBG] id=', dbgId, 'rowsToGroup count=', rowsForDbg.length, 'sumDaily=', sumDaily, 'sumPlus60=', sumPlus60, 'sumMinus60=', sumMinus60)
+                  // eslint-disable-next-line no-console
+                  if (showDbg() || dbgId === '204575')
+                    console.table(
+                      rowsForDbg.map((r) => ({
+                        id: r.id,
+                        date: r.dateIso,
+                        dateShort: r.dateShort,
+                        hrs303: r.hrs303,
+                        hrs304: r.hrs304,
+                        hrs505: r.hrs505,
+                        hrs506: r.hrs506,
+                        hrs511: r.hrs511,
+                        hrs512: r.hrs512,
+                        plus60: r.plus60,
+                        plus60Minutes: r.plus60Minutes,
+                        minus60Minutes: r.minus60Minutes,
+                        hours60Minutes: r.hours60Minutes,
+                        hours60Label: formatMinutes(r.hours60Minutes ?? 0),
+                      })),
+                    )
+                }
+              })
+            } catch (e) {
+              // ignore
+            }
+
             return Array.from(grouped.values()).map((g) => {
               const rangeLabel = formatDayRange(g.minDate, g.maxDate)
+              // Diagnostic: log grouped totals for debug registrations
+              try {
+                const dbgIds = ['202079', '204575']
+                if (dbgIds.includes(String(g.registration))) {
+                  const netHours60 = (g.plus60Minutes || 0) - (g.minus60Minutes || 0)
+                  const netHours100 = g.plus100Minutes || 0
+                  // eslint-disable-next-line no-console
+                  if (showDbg())
+                    console.debug(
+                      '[OVERTIME-DBG] grouped for',
+                      g.registration,
+                      'plus60=', g.plus60Minutes,
+                      'minus60=', g.minus60Minutes,
+                      'netHours60=', netHours60,
+                      'netHours100=', netHours100,
+                    )
+                }
+              } catch (e) {
+                // ignore
+              }
               return {
                 id: g.registration,
                 dateIso: g.maxDate ?? '',
@@ -795,8 +1277,9 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
                 plus60: formatMinutes(g.plus60Minutes),
                 minus60: formatMinutes(g.minus60Minutes),
                 plus100: formatMinutes(g.plus100Minutes),
-                hours60: formatMinutes(g.hours60Minutes),
-                hours100: formatMinutes(g.hours100Minutes),
+                // calcular saldo líquido (plus - minus) para 60%
+                hours60: formatMinutes((g.plus60Minutes || 0) - (g.minus60Minutes || 0)),
+                hours100: formatMinutes(g.plus100Minutes || 0),
                 hrs303: formatMinutes(g.hrs303Minutes),
                 hrs304: formatMinutes(g.hrs304Minutes),
                 hrs505: formatMinutes(g.hrs505Minutes),
@@ -806,8 +1289,8 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
                 plus60Minutes: g.plus60Minutes,
                 minus60Minutes: g.minus60Minutes,
                 plus100Minutes: g.plus100Minutes,
-                hours60Minutes: g.hours60Minutes,
-                hours100Minutes: g.hours100Minutes,
+                hours60Minutes: (g.plus60Minutes || 0) - (g.minus60Minutes || 0),
+                hours100Minutes: g.plus100Minutes || 0,
                 hrs303Minutes: g.hrs303Minutes,
                 hrs304Minutes: g.hrs304Minutes,
                 hrs505Minutes: g.hrs505Minutes,
@@ -934,50 +1417,27 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
   }, [rows, sort])
 
   const totals = useMemo(() => {
-    const groupedByRegistration = new Map<
-      string,
-      {
-        hours60: number
-        hours100: number
-        salary: number
-      }
-    >()
+    // Use the ungrouped daily rows (`rawRows`) to compute totals so that the
+    // aggregated values always reflect the sum of the individual daily entries.
+    let total60Minutes = 0
+    let total100Minutes = 0
+    let totalValue60 = 0
+    let totalValue100 = 0
 
-    sortedRows.forEach((row) => {
-      const key = row.registration ?? row.id
+    rawRows.forEach((row) => {
       const salary = salaryByRegistration[row.registration] ?? row.salary ?? 0
-      const current = groupedByRegistration.get(key) ?? { hours60: 0, hours100: 0, salary: 0 }
-      // Considera apenas horas positivas (00:00 e negativas são ignoradas)
-      const hours60Positive = Math.max(row.hours60Minutes ?? 0, 0)
-      const hours100Positive = Math.max(row.hours100Minutes ?? row.plus100Minutes ?? 0, 0)
-      current.hours60 += hours60Positive
-      current.hours100 += hours100Positive
-      if (salary > 0) current.salary = salary
-      groupedByRegistration.set(key, current)
+      const hours60 = Math.max(row.hours60Minutes ?? row.plus60Minutes ?? 0, 0)
+      const hours100 = Math.max(row.hours100Minutes ?? row.plus100Minutes ?? 0, 0)
+
+      total60Minutes += hours60
+      total100Minutes += hours100
+
+      if (salary > 0) {
+        const hourly = salary / BASE_MONTHLY_HOURS
+        if (hours60 > 0) totalValue60 += hourly * 1.6 * (hours60 / 60)
+        if (hours100 > 0) totalValue100 += hourly * 2 * (hours100 / 60)
+      }
     })
-
-    // Para 60% só consideramos horas positivas (pagáveis)
-    const total60Minutes = Array.from(groupedByRegistration.values()).reduce((acc, group) => {
-      const payable = Math.max(group.hours60, 0)
-      return acc + payable
-    }, 0)
-    const total100Minutes = Array.from(groupedByRegistration.values()).reduce((acc, group) => acc + group.hours100, 0)
-
-    const totalValue60 = Array.from(groupedByRegistration.values()).reduce((acc, group) => {
-      if (group.salary <= 0) return acc
-      const payableMinutes = Math.max(group.hours60, 0)
-      if (payableMinutes <= 0) return acc
-      const hourly = group.salary / BASE_MONTHLY_HOURS
-      return acc + hourly * 1.6 * (payableMinutes / 60)
-    }, 0)
-
-    const totalValue100 = Array.from(groupedByRegistration.values()).reduce((acc, group) => {
-      if (group.salary <= 0) return acc
-      const payableMinutes = Math.max(group.hours100, 0)
-      if (payableMinutes <= 0) return acc
-      const hourly = group.salary / BASE_MONTHLY_HOURS
-      return acc + hourly * 2 * (payableMinutes / 60)
-    }, 0)
 
     return {
       total60Label: formatMinutes(total60Minutes),
@@ -985,7 +1445,7 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
       totalValue60Label: totalValue60 > 0 ? totalValue60.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-',
       totalValue100Label: totalValue100 > 0 ? totalValue100.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-',
     }
-  }, [salaryByRegistration, sortedRows])
+  }, [salaryByRegistration, rawRows])
 
   const sectorChartData = useMemo(() => {
     const byRegistrationAndSector = new Map<
@@ -1426,6 +1886,31 @@ const OperationsOvertimePanel: React.FC<OperationsOvertimePanelProps> = ({ supab
                   )}
                 </tr>
               ))}
+              {/* Linha de total quando filtro por Nome/Cadastro estiver ativo */}
+              {filterText && (() => {
+                const sumHrs303 = sortedRows.reduce((acc, r) => acc + (r.hrs303Minutes ?? 0), 0)
+                const sumHrs304 = sortedRows.reduce((acc, r) => acc + (r.hrs304Minutes ?? 0), 0)
+                const sumHrs505 = sortedRows.reduce((acc, r) => acc + (r.hrs505Minutes ?? 0), 0)
+                const sumHrs506 = sortedRows.reduce((acc, r) => acc + (r.hrs506Minutes ?? 0), 0)
+                const sumHrs511 = sortedRows.reduce((acc, r) => acc + (r.hrs511Minutes ?? 0), 0)
+                const sumHrs512 = sortedRows.reduce((acc, r) => acc + (r.hrs512Minutes ?? 0), 0)
+
+                return (
+                  <tr className="border-t border-white/5 bg-emerald-500/5 font-semibold">
+                    <td className="py-1 whitespace-nowrap text-xs text-center"></td>
+                    <td className="py-1 text-center text-xs"></td>
+                    <td className="py-1 text-center text-xs"></td>
+                    <td className="py-1">Total</td>
+                    <td className="py-1 px-1 text-center align-middle">{formatMinutes(sumHrs303)}</td>
+                    <td className="py-1 px-1 text-center align-middle">{formatMinutes(sumHrs304)}</td>
+                    <td className="py-1 px-1 text-center align-middle">{formatMinutes(sumHrs505)}</td>
+                    <td className="py-1 px-1 text-center align-middle">{formatMinutes(sumHrs506)}</td>
+                    <td className="py-1 px-1 text-center align-middle">{formatMinutes(sumHrs511)}</td>
+                    <td className="py-1 px-1 text-center align-middle">{formatMinutes(sumHrs512)}</td>
+                    <td className="py-1 text-center"></td>
+                  </tr>
+                )
+              })()}
             </tbody>
           </table>
         </div>

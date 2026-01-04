@@ -5,6 +5,7 @@ import type {
   OvertimeDateCheck,
   OvertimeDatesCheck,
   OvertimeDeleteResult,
+  OvertimeSummaryRow,
 } from '../models/overtime'
 
 const parseNumber = (val: any): number | null => {
@@ -76,6 +77,75 @@ const parseDateIso = (val: any): string | null => {
   }
 
   return null
+}
+
+export const fetchOvertimeSummary = async (
+  filters: { company?: string | number; sector?: string; year?: string; month?: string; day?: string },
+  supabaseUrl?: string,
+  supabaseKey?: string
+): Promise<{ ok: boolean; rows: OvertimeSummaryRow[]; error?: string }> => {
+  const apiKey = (supabaseKey || '').trim()
+  if (!supabaseUrl || !apiKey) {
+    return { ok: false, rows: [], error: 'Missing Supabase credentials' }
+  }
+
+  const { company, sector, year, month, day } = filters
+  try {
+    const url = new URL(`${supabaseUrl}/rest/v1/overtime_summary`)
+    url.searchParams.set(
+      'select',
+      'company,date_,registration,name,sector,hrs303,hrs304,hrs505,hrs506,hrs511,hrs512'
+    )
+    url.searchParams.set('order', 'date_.desc,name.asc')
+
+    if (company) url.searchParams.append('company', `eq.${company}`)
+    if (sector) url.searchParams.append('sector', `eq.${sector}`)
+    const yearSafe = year || String(new Date().getFullYear())
+    const monthSafe = month ? String(month).padStart(2, '0') : null
+    const daySafe = day ? String(day).padStart(2, '0') : null
+    if (daySafe && monthSafe) {
+      url.searchParams.append('date_', `eq.${yearSafe}-${monthSafe}-${daySafe}`)
+    } else if (monthSafe) {
+      const lastDay = new Date(Number(yearSafe), Number(monthSafe), 0).getDate()
+      url.searchParams.append('date_', `gte.${yearSafe}-${monthSafe}-01`)
+      url.searchParams.append('date_', `lte.${yearSafe}-${monthSafe}-${String(lastDay).padStart(2, '0')}`)
+    } else if (year || daySafe) {
+      // day sem mês não faz sentido; se vier daySafe mas não month, ignora e usa o ano inteiro
+      url.searchParams.append('date_', `gte.${yearSafe}-01-01`)
+      url.searchParams.append('date_', `lte.${yearSafe}-12-31`)
+    }
+
+    const pageSize = 1000
+    let offset = 0
+    const allRows: OvertimeSummaryRow[] = []
+
+    while (true) {
+      const rangeHeader = `${offset}-${offset + pageSize - 1}`
+      const res = await fetch(url.toString(), {
+        headers: {
+          apikey: apiKey,
+          Authorization: `Bearer ${apiKey}`,
+          Range: rangeHeader,
+        },
+      })
+
+      if (!res.ok) {
+        return { ok: false, rows: [], error: await res.text() }
+      }
+
+      const data = (await res.json()) as OvertimeSummaryRow[]
+      allRows.push(...data)
+
+      if (data.length < pageSize) break
+      offset += pageSize
+      // safety cap to avoid runaway loops
+      if (offset > 50000) break
+    }
+
+    return { ok: true, rows: allRows }
+  } catch (error) {
+    return { ok: false, rows: [], error: (error as Error).message }
+  }
 }
 
 export const checkOvertimeDateExists = async (
