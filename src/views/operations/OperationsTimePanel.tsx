@@ -68,8 +68,92 @@ const formatMinutes = (value: number) => {
   return `${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
+const formatDateRangeForRow = (start?: string, end?: string) => {
+  if (!start && !end) return '-'
+  const parse = (v: string) => v.split('-')
+  const [sy, sm, sd] = start ? parse(start) : ['', '', '']
+  const [ey, em, ed] = end ? parse(end) : ['', '', '']
+  if (start === end && sd && sm) return `${sd}/${sm}`
+  const dayStart = sd || '--'
+  const dayEnd = ed || dayStart || '--'
+  const month = sm || em || ''
+  return `${dayStart}-${dayEnd}/${month}`
+}
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(value)
+
+type DisplayRow = OvertimeSummaryRow & Partial<AggregatedRow> & { isAggregated?: boolean }
+
+type AggregatedRow = {
+  key: string
+  company: number | null
+  date_: string
+  startDate?: string
+  endDate?: string
+  registration: number
+  name: string
+  sector: string | null
+  salary: number
+  mins303: number
+  mins304: number
+  mins505: number
+  mins506: number
+  mins511: number
+  mins512: number
+}
+
+const aggregateRows = (rows: OvertimeSummaryRow[], grouping: 'day' | 'month'): AggregatedRow[] => {
+  const map = new Map<string, AggregatedRow>()
+  rows.forEach((r) => {
+    const [year, month, day] = (r.date_ || '').split('-')
+    const monthKey = year && month ? `${year}-${month}` : 'no-month'
+    const key =
+      grouping === 'month'
+        ? `${r.company ?? 'no-company'}|${r.registration ?? 'no-reg'}|${monthKey}`
+        : `${r.company ?? 'no-company'}|${r.registration ?? 'no-reg'}|${r.date_ ?? 'no-date'}`
+    const current = map.get(key)
+    const mins303 = parseIntervalMinutes(r.hrs303)
+    const mins304 = parseIntervalMinutes(r.hrs304)
+    const mins505 = parseIntervalMinutes(r.hrs505)
+    const mins506 = parseIntervalMinutes(r.hrs506)
+    const mins511 = parseIntervalMinutes(r.hrs511)
+    const mins512 = parseIntervalMinutes(r.hrs512)
+    if (current) {
+      current.mins303 += mins303
+      current.mins304 += mins304
+      current.mins505 += mins505
+      current.mins506 += mins506
+      current.mins511 += mins511
+      current.mins512 += mins512
+      if (!current.salary && r.salary) current.salary = Number(r.salary)
+      if (!current.sector && r.sector) current.sector = r.sector
+      // controla range de datas dentro do mês
+      const curStart = current.startDate || r.date_
+      const curEnd = current.endDate || r.date_
+      current.startDate = [curStart, r.date_].filter(Boolean).sort()[0]
+      current.endDate = [curEnd, r.date_].filter(Boolean).sort().slice(-1)[0]
+    } else {
+      map.set(key, {
+        key,
+        company: r.company ?? null,
+        date_: grouping === 'month' ? monthKey : r.date_ ?? '',
+        startDate: r.date_ ?? undefined,
+        endDate: r.date_ ?? undefined,
+        registration: Number(r.registration ?? 0),
+        name: r.name,
+        sector: r.sector ?? null,
+        salary: Number(r.salary ?? 0) || 0,
+        mins303,
+        mins304,
+        mins505,
+        mins506,
+        mins511,
+        mins512,
+      })
+    }
+  })
+  return Array.from(map.values())
+}
 
 const CHART_COLORS = ['#8b5cf6', '#f97316', '#ef4444', '#f59e0b', '#22c55e', '#0ea5e9']
 const BAR_TOOLTIP_STYLE = { backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: 8, color: '#fff' }
@@ -312,13 +396,99 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
   }, [filterText, rows])
   const visibleRows = useMemo(() => {
     if (!filterDay) return filteredRows
-    const day = filterDay.padStart(2, '0')
-    return filteredRows.filter((r) => r.date_?.split('-')[2] === day)
+    const dayNumber = Number(filterDay)
+    return filteredRows.filter((r) => {
+      const parts = r.date_?.split('-') || []
+      const d = parts.length === 3 ? Number(parts[2]) : NaN
+      if (Number.isNaN(d)) return false
+      return d === dayNumber
+    })
   }, [filteredRows, filterDay])
-  const totalRows = visibleRows.length
+
+  // Conjunto para totais/agrupamentos de Hr 60% e Hr 100%
+  // - Sem dia: usa todos filtrados (agrupamento mensal)
+  // - Com dia: usa 1..dia selecionado apenas para as matrículas visíveis no dia (cumulativo por matrícula)
+  const rowsForTotalsSource = useMemo(() => {
+    if (!filterDay) return filteredRows
+    const regsInDay = new Set<string>()
+    visibleRows.forEach((r) => {
+      if (r.registration !== null && r.registration !== undefined) {
+        regsInDay.add(String(r.registration))
+      }
+    })
+    const dayNumber = Number(filterDay)
+    return filteredRows.filter((r) => {
+      const parts = r.date_?.split('-') || []
+      const d = parts.length === 3 ? Number(parts[2]) : NaN
+      if (Number.isNaN(d)) return false
+      const reg = r.registration !== null && r.registration !== undefined ? String(r.registration) : ''
+      if (reg && regsInDay.size > 0 && !regsInDay.has(reg)) return false
+      return d <= dayNumber
+    })
+  }, [filteredRows, filterDay, visibleRows])
+
+  const aggregationMode: 'month' = 'month'
+  const aggregatedVisibleRows = useMemo(() => aggregateRows(visibleRows, aggregationMode), [visibleRows, aggregationMode])
+  const aggregatedVisibleDisplayRows = useMemo<DisplayRow[]>(
+    () =>
+      aggregatedVisibleRows.map((r) => ({
+        company: r.company,
+        date_: r.date_,
+        registration: r.registration,
+        name: r.name,
+        sector: r.sector,
+        salary: r.salary,
+        startDate: r.startDate,
+        endDate: r.endDate,
+        hrs303: formatMinutes(r.mins303),
+        hrs304: formatMinutes(r.mins304),
+        hrs505: formatMinutes(r.mins505),
+        hrs506: formatMinutes(r.mins506),
+        hrs511: formatMinutes(r.mins511),
+        hrs512: formatMinutes(r.mins512),
+        mins303: r.mins303,
+        mins304: r.mins304,
+        mins505: r.mins505,
+        mins506: r.mins506,
+        mins511: r.mins511,
+        mins512: r.mins512,
+        key: r.key,
+        isAggregated: true,
+      })),
+    [aggregatedVisibleRows]
+  )
+  const displayRows: DisplayRow[] = useMemo(() => (filterDay ? visibleRows : aggregatedVisibleDisplayRows), [filterDay, visibleRows, aggregatedVisibleDisplayRows])
+
+  const getMinutesFromRow = (row: DisplayRow, field: '303' | '304' | '505' | '506' | '511' | '512') => {
+    if (row.isAggregated) {
+      if (field === '303') return row.mins303 ?? 0
+      if (field === '304') return row.mins304 ?? 0
+      if (field === '505') return row.mins505 ?? 0
+      if (field === '506') return row.mins506 ?? 0
+      if (field === '511') return row.mins511 ?? 0
+      if (field === '512') return row.mins512 ?? 0
+    }
+    const map: Record<typeof field, string | null | undefined> = {
+      '303': row.hrs303,
+      '304': row.hrs304,
+      '505': row.hrs505,
+      '506': row.hrs506,
+      '511': row.hrs511,
+      '512': row.hrs512,
+    }
+    return parseIntervalMinutes(map[field])
+  }
+
+  const displayInterval = (row: DisplayRow, field: '303' | '304' | '505' | '506' | '511' | '512') => {
+    const minutes = getMinutesFromRow(row, field)
+    if (minutes === 0) return ''
+    return formatMinutes(minutes)
+  }
+
+  const totalRows = displayRows.length
 
   const sortedRows = useMemo(() => {
-    const arr = [...visibleRows]
+    const arr = [...displayRows]
     const { key, direction } = sort
     const dir = direction === 'asc' ? 1 : -1
     arr.sort((a, b) => {
@@ -327,31 +497,31 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
         if (key === 'registration') return Number(a.registration) || 0
         if (key === 'name') return a.name || ''
         if (key === 'sector') return a.sector || ''
-        const hrs60Row = parseIntervalMinutes(a.hrs505) + parseIntervalMinutes(a.hrs506) - parseIntervalMinutes(a.hrs511) - parseIntervalMinutes(a.hrs512)
-        const hrs100Row = parseIntervalMinutes(a.hrs303) + parseIntervalMinutes(a.hrs304)
-        if (key === 'hrs303') return parseIntervalMinutes(a.hrs303)
-        if (key === 'hrs304') return parseIntervalMinutes(a.hrs304)
-        if (key === 'hrs505') return parseIntervalMinutes(a.hrs505)
-        if (key === 'hrs506') return parseIntervalMinutes(a.hrs506)
-        if (key === 'hrs511') return parseIntervalMinutes(a.hrs511)
-        if (key === 'hrs512') return parseIntervalMinutes(a.hrs512)
+        const hrs60Row = getMinutesFromRow(a, '505') + getMinutesFromRow(a, '506') - getMinutesFromRow(a, '511') - getMinutesFromRow(a, '512')
+        const hrs100Row = getMinutesFromRow(a, '303') + getMinutesFromRow(a, '304')
+        if (key === 'hrs303') return getMinutesFromRow(a, '303')
+        if (key === 'hrs304') return getMinutesFromRow(a, '304')
+        if (key === 'hrs505') return getMinutesFromRow(a, '505')
+        if (key === 'hrs506') return getMinutesFromRow(a, '506')
+        if (key === 'hrs511') return getMinutesFromRow(a, '511')
+        if (key === 'hrs512') return getMinutesFromRow(a, '512')
         if (key === 'hrs60') return hrs60Row
         if (key === 'hrs100') return hrs100Row
         return ''
       })()
       const valB = (() => {
-        const hrs60Row = parseIntervalMinutes(b.hrs505) + parseIntervalMinutes(b.hrs506) - parseIntervalMinutes(b.hrs511) - parseIntervalMinutes(b.hrs512)
-        const hrs100Row = parseIntervalMinutes(b.hrs303) + parseIntervalMinutes(b.hrs304)
+        const hrs60Row = getMinutesFromRow(b, '505') + getMinutesFromRow(b, '506') - getMinutesFromRow(b, '511') - getMinutesFromRow(b, '512')
+        const hrs100Row = getMinutesFromRow(b, '303') + getMinutesFromRow(b, '304')
         if (key === 'date') return b.date_ || ''
         if (key === 'registration') return Number(b.registration) || 0
         if (key === 'name') return b.name || ''
         if (key === 'sector') return b.sector || ''
-        if (key === 'hrs303') return parseIntervalMinutes(b.hrs303)
-        if (key === 'hrs304') return parseIntervalMinutes(b.hrs304)
-        if (key === 'hrs505') return parseIntervalMinutes(b.hrs505)
-        if (key === 'hrs506') return parseIntervalMinutes(b.hrs506)
-        if (key === 'hrs511') return parseIntervalMinutes(b.hrs511)
-        if (key === 'hrs512') return parseIntervalMinutes(b.hrs512)
+        if (key === 'hrs303') return getMinutesFromRow(b, '303')
+        if (key === 'hrs304') return getMinutesFromRow(b, '304')
+        if (key === 'hrs505') return getMinutesFromRow(b, '505')
+        if (key === 'hrs506') return getMinutesFromRow(b, '506')
+        if (key === 'hrs511') return getMinutesFromRow(b, '511')
+        if (key === 'hrs512') return getMinutesFromRow(b, '512')
         if (key === 'hrs60') return hrs60Row
         if (key === 'hrs100') return hrs100Row
         return ''
@@ -370,56 +540,50 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
       return String(valA).localeCompare(String(valB), 'pt-BR', { sensitivity: 'base' }) * dir
     })
     return arr
-  }, [visibleRows, sort])
+  }, [displayRows, sort])
 
   // Totais base para colunas individuais: usam apenas linhas visíveis (após filtro de dia, se houver)
-  const total303 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs303), 0)
-  const total304 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs304), 0)
-  const total505 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs505), 0)
-  const total506 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs506), 0)
-  const total511 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs511), 0)
-  const total512 = visibleRows.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs512), 0)
+  const total303 = displayRows.reduce((acc, r) => acc + getMinutesFromRow(r, '303'), 0)
+  const total304 = displayRows.reduce((acc, r) => acc + getMinutesFromRow(r, '304'), 0)
+  const total505 = displayRows.reduce((acc, r) => acc + getMinutesFromRow(r, '505'), 0)
+  const total506 = displayRows.reduce((acc, r) => acc + getMinutesFromRow(r, '506'), 0)
+  const total511 = displayRows.reduce((acc, r) => acc + getMinutesFromRow(r, '511'), 0)
+  const total512 = displayRows.reduce((acc, r) => acc + getMinutesFromRow(r, '512'), 0)
 
-  // Para Hr 60% / Hr 100%: se um dia específico foi selecionado, usamos todas as linhas carregadas (cumulativo do dia 1 até o dia escolhido).
-  // Caso contrário, usamos apenas as linhas visíveis.
-  const rowsForTotals = filterDay ? filteredRows : visibleRows
+  // Para Hr 60% / Hr 100%: usamos conjunto do dia selecionado (quando há dia); sem dia, usa todo o mês.
+  const rowsForTotals = rowsForTotalsSource
+  const allowNegative60 = filterText.trim().length > 0
+  // Para Hr 60%/100% sempre agregamos por mês (por matrícula/empresa) e somamos apenas as datas <= dia selecionado.
+  const aggregationModeTotals: 'month' = 'month'
+  const aggregatedRowsForTotals = useMemo(() => aggregateRows(rowsForTotals, aggregationModeTotals), [rowsForTotals, aggregationModeTotals])
 
   // Hrs 60%: (505 + 506) - (511 + 512) — total ignora valores negativos
-  const totalHrs60 = rowsForTotals.reduce((acc, r) => {
-    const m505 = parseIntervalMinutes(r.hrs505)
-    const m506 = parseIntervalMinutes(r.hrs506)
-    const m511 = parseIntervalMinutes(r.hrs511)
-    const m512 = parseIntervalMinutes(r.hrs512)
-    const val = m505 + m506 - m511 - m512
-    // Quando o filtro de texto estiver aplicado, somamos com negativos (solicitação do usuário).
-    if (filterText.trim()) {
-      return acc + val
-    }
-    return acc + (val > 0 ? val : 0)
+  const totalHrs60 = aggregatedRowsForTotals.reduce((acc, r) => {
+    const val = r.mins505 + r.mins506 - r.mins511 - r.mins512
+    return acc + (allowNegative60 ? val : Math.max(val, 0))
   }, 0)
-  // Hrs 100%: (303 + 304)
-  const totalHrs100 = rowsForTotals.reduce((acc, r) => acc + parseIntervalMinutes(r.hrs303) + parseIntervalMinutes(r.hrs304), 0)
+  // Hrs 100%: (303 + 304) — agora sobre linhas únicas (similar ao UNIQUE do Excel)
+  const totalHrs100 = aggregatedRowsForTotals.reduce((acc, r) => acc + r.mins303 + r.mins304, 0)
 
   const { totalValue60, totalValue100 } = useMemo(() => {
     let value60 = 0
     let value100 = 0
-    rowsForTotals.forEach((r) => {
-      const salary = Number((r as any).salary ?? 0)
+    aggregatedRowsForTotals.forEach((r) => {
+      const salary = Number(r.salary ?? 0)
       if (!salary) return
       const hourly = salary / 220 // suposição: salário mensal / 220 horas
-      const mins60Raw = parseIntervalMinutes(r.hrs505) + parseIntervalMinutes(r.hrs506) - parseIntervalMinutes(r.hrs511) - parseIntervalMinutes(r.hrs512)
-      const mins60 = filterText.trim() ? mins60Raw : Math.max(mins60Raw, 0)
-      const mins100 = parseIntervalMinutes(r.hrs303) + parseIntervalMinutes(r.hrs304)
+      const mins60Raw = r.mins505 + r.mins506 - r.mins511 - r.mins512
+      const mins60 = allowNegative60 ? mins60Raw : Math.max(mins60Raw, 0)
+      const mins100 = r.mins303 + r.mins304
       value60 += (mins60 / 60) * hourly * 1.6
       value100 += (mins100 / 60) * hourly * 2
     })
     return { totalValue60: value60, totalValue100: value100 }
-  }, [rowsForTotals, filterText])
+  }, [aggregatedRowsForTotals, allowNegative60])
 
-  // Para gráficos usamos o conjunto cumulativo (filteredRows), que já representa 1..dia selecionado quando há filtro de dia.
-  const rowsForCharts = filteredRows
-
-  const allowNegative60 = filterText.trim().length > 0
+  // Para gráficos usamos o mesmo conjunto dos totais (cumulativo 1..dia quando há dia).
+  const rowsForCharts = rowsForTotals
+  const aggregatedRowsForCharts = useMemo(() => aggregateRows(rowsForCharts, aggregationModeTotals), [rowsForCharts, aggregationModeTotals])
 
   const sectorChartData: SectorChartDatum[] = useMemo(() => {
     const bySector = new Map<
@@ -431,13 +595,13 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
         value100: number
       }
     >()
-    rowsForCharts.forEach((r) => {
+    aggregatedRowsForCharts.forEach((r) => {
       const sector = r.sector || 'Sem Setor'
-      const salary = Number((r as any).salary ?? 0)
+      const salary = Number(r.salary ?? 0)
       const hourly = salary ? salary / 220 : 0
-      const mins60Raw = parseIntervalMinutes(r.hrs505) + parseIntervalMinutes(r.hrs506) - parseIntervalMinutes(r.hrs511) - parseIntervalMinutes(r.hrs512)
+      const mins60Raw = r.mins505 + r.mins506 - r.mins511 - r.mins512
       const mins60 = allowNegative60 ? mins60Raw : Math.max(mins60Raw, 0)
-      const mins100Raw = parseIntervalMinutes(r.hrs303) + parseIntervalMinutes(r.hrs304)
+      const mins100Raw = r.mins303 + r.mins304
       const mins100 = allowNegative60 ? mins100Raw : Math.max(mins100Raw, 0)
       const value60 = hourly ? (mins60 / 60) * hourly * 1.6 : 0
       const value100 = hourly ? (mins100 / 60) * hourly * 2 : 0
@@ -459,7 +623,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
       valueTotal: data.value60 + data.value100,
     }))
     return arr.sort((a, b) => b.hoursTotal - a.hoursTotal)
-  }, [rowsForCharts, allowNegative60])
+  }, [aggregatedRowsForCharts, allowNegative60])
 
   const sectorChartHours60 = useMemo(
     () =>
@@ -521,15 +685,15 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
         value100: number
       }
     >()
-    rowsForCharts.forEach((r) => {
+    aggregatedRowsForCharts.forEach((r) => {
       const [year, month] = (r.date_ || '').split('-')
       if (!year || !month) return
       const key = `${year}-${month}`
       const salary = Number((r as any).salary ?? 0)
       const hourly = salary ? salary / 220 : 0
-      const mins60Raw = parseIntervalMinutes(r.hrs505) + parseIntervalMinutes(r.hrs506) - parseIntervalMinutes(r.hrs511) - parseIntervalMinutes(r.hrs512)
+      const mins60Raw = r.mins505 + r.mins506 - r.mins511 - r.mins512
       const mins60 = allowNegative60 ? mins60Raw : Math.max(mins60Raw, 0)
-      const mins100Raw = parseIntervalMinutes(r.hrs303) + parseIntervalMinutes(r.hrs304)
+      const mins100Raw = r.mins303 + r.mins304
       const mins100 = allowNegative60 ? mins100Raw : Math.max(mins100Raw, 0)
       const value60 = hourly ? (mins60 / 60) * hourly * 1.6 : 0
       const value100 = hourly ? (mins100 / 60) * hourly * 2 : 0
@@ -553,23 +717,22 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
       }
     })
     return arr.sort((a, b) => a.key.localeCompare(b.key))
-  }, [rowsForCharts, allowNegative60])
+  }, [aggregatedRowsForCharts, allowNegative60])
   const barTooltipHours = useMemo(() => makeBarTooltipHours(), [])
   const barTooltipValues = useMemo(() => makeBarTooltipValues(), [])
 
   const cumulativeByRegistration = useMemo(() => {
     if (!filterDay) return null
     const acc = new Map<string, { hrs60: number; hrs100: number }>()
-    filteredRows.forEach((r) => {
+    aggregatedRowsForTotals.forEach((r) => {
       const reg = r.registration ? String(r.registration) : ''
       if (!reg) return
-      const val60 = parseIntervalMinutes(r.hrs505) + parseIntervalMinutes(r.hrs506) - parseIntervalMinutes(r.hrs511) - parseIntervalMinutes(r.hrs512)
-      const val100 = parseIntervalMinutes(r.hrs303) + parseIntervalMinutes(r.hrs304)
-      const prev = acc.get(reg) || { hrs60: 0, hrs100: 0 }
-      acc.set(reg, { hrs60: prev.hrs60 + val60, hrs100: prev.hrs100 + val100 })
+      const val60 = r.mins505 + r.mins506 - r.mins511 - r.mins512
+      const val100 = r.mins303 + r.mins304
+      acc.set(reg, { hrs60: val60, hrs100: val100 })
     })
     return acc
-  }, [filterDay, filteredRows])
+  }, [filterDay, aggregatedRowsForTotals])
 
   const companyHeaderLabel = useMemo(() => {
     if (filterCompany) return formatCompanyLabel(filterCompany)
@@ -599,26 +762,36 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
       )
     }
     return sortedRows.map((row) => {
-      const hrs60Raw = parseIntervalMinutes(row.hrs505) + parseIntervalMinutes(row.hrs506) - parseIntervalMinutes(row.hrs511) - parseIntervalMinutes(row.hrs512)
-      const hrs100Raw = parseIntervalMinutes(row.hrs303) + parseIntervalMinutes(row.hrs304)
+      const hrs60Raw = getMinutesFromRow(row, '505') + getMinutesFromRow(row, '506') - getMinutesFromRow(row, '511') - getMinutesFromRow(row, '512')
+      const hrs100Raw = getMinutesFromRow(row, '303') + getMinutesFromRow(row, '304')
       const regKey = row.registration ? String(row.registration) : ''
       const cumulative = filterDay && cumulativeByRegistration ? cumulativeByRegistration.get(regKey) : null
       const hrs60 = cumulative ? cumulative.hrs60 : hrs60Raw
       const hrs100 = cumulative ? cumulative.hrs100 : hrs100Raw
+      const displayDate = (() => {
+        if (row.isAggregated) {
+          if (filterDay) {
+            const month = row.endDate?.split('-')[1] || row.startDate?.split('-')[1] || row.date_?.split('-')[1] || ''
+            return filterDay && month ? `${filterDay.padStart(2, '0')}/${month}` : '-'
+          }
+          return formatDateRangeForRow(row.startDate, row.endDate)
+        }
+        return formatDateDayMonth(row.date_)
+      })()
       return (
         <tr key={`${row.company}-${row.registration}-${row.date_}`} className="odd:bg-white/5">
-          <td className="px-1 py-2 text-center">{formatDateDayMonth(row.date_)}</td>
+          <td className="px-1 py-2 text-center">{displayDate}</td>
           <td className="px-1 py-2 text-center">{row.registration}</td>
           <td className="px-1 py-2 whitespace-nowrap overflow-hidden text-ellipsis">
             <span className="block truncate">{row.name}</span>
           </td>
           <td className="px-1 py-2">{row.sector ? abbreviateSector(row.sector) : '-'}</td>
-          <td className="px-1 py-2 text-center">{formatInterval(row.hrs303)}</td>
-          <td className="px-1 py-2 text-center">{formatInterval(row.hrs304)}</td>
-          <td className="px-1 py-2 text-center">{formatInterval(row.hrs505)}</td>
-          <td className="px-1 py-2 text-center">{formatInterval(row.hrs506)}</td>
-          <td className="px-1 py-2 text-center">{formatInterval(row.hrs511)}</td>
-          <td className="px-1 py-2 text-center">{formatInterval(row.hrs512)}</td>
+          <td className="px-1 py-2 text-center">{displayInterval(row, '303')}</td>
+          <td className="px-1 py-2 text-center">{displayInterval(row, '304')}</td>
+          <td className="px-1 py-2 text-center">{displayInterval(row, '505')}</td>
+          <td className="px-1 py-2 text-center">{displayInterval(row, '506')}</td>
+          <td className="px-1 py-2 text-center">{displayInterval(row, '511')}</td>
+          <td className="px-1 py-2 text-center">{displayInterval(row, '512')}</td>
           <td className={`px-1 py-2 text-orange-500 text-xs text-center ${hrs60 <= 0 ? 'text-white/30' : ''}`}>{hrs60 !== 0 ? formatMinutes(hrs60) : '-'}</td>
           <td className={`px-1 py-2 text-rose-500 text-xs text-center ${hrs100 <= 0 ? 'text-white/30' : ''}`}>{hrs100 !== 0 ? formatMinutes(hrs100) : '-'}</td>
         </tr>
@@ -837,7 +1010,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
             <div className="flex-1 overflow-y-auto" style={{ scrollbarGutter: 'stable both-edges' }}>
               <table className={`w-full text-[11px] text-white/80 border-collapse table-fixed ${rows.length > 0 ? 'min-h-full' : ''}`}>
                 <colgroup>
-                  <col className="w-[5%]" />
+                  <col className="w-[9%]" />
                   <col className="w-[5%]" />
                   <col className="w-[20%]" />
                   <col className="w-[10%]" />
@@ -920,7 +1093,7 @@ const OperationsTimePanel: React.FC<OperationsTimePanelProps> = ({ supabaseUrl, 
             <div className="bg-green-800 text-[11px] uppercase tracking-[0.2em] text-white/70 backdrop-blur">
               <table className="w-full text-[11px] text-white/80 border-collapse table-fixed">
                 <colgroup>
-                  <col className="w-[5%]" />
+                  <col className="w-[9%]" />
                   <col className="w-[5%]" />
                   <col className="w-[20%]" />
                   <col className="w-[10%]" />
