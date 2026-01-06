@@ -1,14 +1,12 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
   Settings,
   Bell,
-  Clock3,
   CalendarX2,
   Factory,
   Clock10,
 } from 'lucide-react'
-import OperationsOvertimePanel from './operations/OperationsOvertimePanel'
 import OperationsFaltasPanel from './operations/OperationsFaltasPanel'
 import OperationsProducaoPanel from './operations/OperationsProducaoPanel'
 import OperationsAlertsPanel from './operations/OperationsAlertsPanel'
@@ -23,24 +21,64 @@ interface OperationsProps {
   description?: string
   supabaseUrl?: string
   supabaseKey?: string
+  operationsPermissions?: string | boolean
 }
 
+const ALL_OPERATIONS_PERMISSIONS = ['CREATER', 'READ', 'UPDATE', 'DELETE', 'FALTA', 'TIME', 'PRODUCAO', 'CONFIG'] as const
+
 const sidebarItems = [
-  { key: 'faltas', label: 'Faltas', icon: CalendarX2 },
-  { key: 'time', label: 'Time', icon: Clock10 },
-  { key: 'overtime', label: 'Horas Extras', icon: Clock3 },
-  { key: 'producao', label: 'Producao', icon: Factory },
+  { key: 'faltas', label: 'Faltas', icon: CalendarX2, permission: 'FALTA' },
+  { key: 'time', label: 'Time', icon: Clock10, permission: 'TIME' },
+  { key: 'producao', label: 'Producao', icon: Factory, permission: 'PRODUCAO' },
   { key: 'alerts', label: 'Alerta', icon: Bell },
-  { key: 'config', label: 'Configuracao', icon: Settings },
+  { key: 'config', label: 'Configuracao', icon: Settings, permission: 'CONFIG' },
 ]
 
 const STORAGE_KEY = 'operations:lastActive'
 
-const Operations: React.FC<OperationsProps> = ({ onBack, userName, userRole, title, description, supabaseUrl, supabaseKey, }) => {
+const Operations: React.FC<OperationsProps> = ({
+  onBack,
+  userName,
+  userRole,
+  title,
+  description,
+  supabaseUrl,
+  supabaseKey,
+  operationsPermissions,
+}) => {
+  const permissionsSet = useMemo(() => {
+    if (operationsPermissions === true) return new Set(ALL_OPERATIONS_PERMISSIONS)
+    if (typeof operationsPermissions === 'string') {
+      return new Set(
+        operationsPermissions
+          .split(',')
+          .map((value) => value.trim().toUpperCase())
+          .filter(Boolean),
+      )
+    }
+    return new Set<string>()
+  }, [operationsPermissions])
+
+  const allowedSidebarItems = useMemo(
+    () =>
+      sidebarItems.filter((item) => {
+        if (!item.permission) return true
+        return permissionsSet.has(item.permission)
+      }),
+    [permissionsSet],
+  )
+
   const [active, setActive] = useState<string>(() => {
-    if (typeof window === 'undefined') return 'overtime'
-    return localStorage.getItem(STORAGE_KEY) || 'overtime'
+    if (typeof window === 'undefined') return 'faltas'
+    return localStorage.getItem(STORAGE_KEY) || 'faltas'
   })
+
+  useEffect(() => {
+    if (allowedSidebarItems.length === 0) return
+    if (!allowedSidebarItems.some((item) => item.key === active)) {
+      setActive(allowedSidebarItems[0].key)
+    }
+  }, [active, allowedSidebarItems])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -76,9 +114,9 @@ const Operations: React.FC<OperationsProps> = ({ onBack, userName, userRole, tit
       <div className="flex gap-0">
         <div className="group relative self-start">
           <div className="flex flex-col bg-white/5 border border-white/10 border-r-0 rounded-l-xl overflow-hidden w-12 group-hover:w-40 transition-all duration-300 shadow-inner shadow-black/20">
-            {sidebarItems.map((item, idx) => {
+            {allowedSidebarItems.map((item, idx) => {
               const Icon = item.icon
-              const isLast = idx === sidebarItems.length - 1
+              const isLast = idx === allowedSidebarItems.length - 1
             return (
               <button
                 key={item.key}
@@ -106,12 +144,19 @@ const Operations: React.FC<OperationsProps> = ({ onBack, userName, userRole, tit
         </div>
 
         <div className="flex-1 bg-white/5 border border-white/10 rounded-r-xl rounded-bl-xl rounded-tl-none p-3 shadow-inner shadow-black/10 min-h-[540px]">
-          {active === 'faltas' && <OperationsFaltasPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
-          {active === 'overtime' && <OperationsOvertimePanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
-          {active === 'producao' && <OperationsProducaoPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
-          {active === 'alerts' && <OperationsAlertsPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
-          {active === 'config' && <OperationsConfigPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
-          {active === 'time' && <OperationsTimePanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
+          {allowedSidebarItems.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-white/60 text-sm">
+              Sem permissao para acessar Operacoes.
+            </div>
+          ) : (
+            <>
+              {active === 'faltas' && <OperationsFaltasPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
+              {active === 'producao' && <OperationsProducaoPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
+              {active === 'alerts' && <OperationsAlertsPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
+              {active === 'config' && <OperationsConfigPanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
+              {active === 'time' && <OperationsTimePanel supabaseUrl={supabaseUrl} supabaseKey={supabaseKey} />}
+            </>
+          )}
         </div>
       </div>
     </div>

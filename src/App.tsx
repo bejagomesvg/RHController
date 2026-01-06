@@ -651,6 +651,7 @@ export function App(): ReactElement {
                     description={securityCard?.description}
                     supabaseUrl={supabaseUrl}
                     supabaseKey={supabaseKey}
+                    operationsPermissions={currentUser?.operations}
                   />
                 ) : (
                   <Security
