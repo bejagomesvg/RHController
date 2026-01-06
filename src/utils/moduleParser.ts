@@ -10,6 +10,7 @@ const MODULES: ModuleConfig[] = [
   { label: 'ESCALA & FERIAS', column: 'shift_schedule_and_vacation' },
   { label: 'FOLHA DE PAGAMENTO', column: 'payroll' },
   { label: 'INFRAESTRUTURA', column: 'infrastructure' },
+  { label: 'OPERACOES', column: 'operations' },
   { label: 'RECRUTAMENTO', column: 'recruitment' },
   { label: 'SAUDE E SEGURANCA', column: 'health_and_safety' },
   { label: 'SEGURANCA', column: 'security' },

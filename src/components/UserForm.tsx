@@ -1,5 +1,5 @@
-﻿import React, { useState } from 'react'
-import { X, UserPlus, Edit, Trash2, Eye, RotateCcwKey, ChevronsRight } from 'lucide-react'
+import React, { useState } from 'react'
+import { CalendarX2, ChevronsRight, Clock10, Edit, Eye, Factory, RotateCcwKey, Settings, Trash2, UserPlus, X } from 'lucide-react'
 import { MODULE_LABELS } from '../utils/moduleParser'
 
 export type NewUserData = {
@@ -52,7 +52,31 @@ const AVAILABLE_SECTORS = [
 
 const AVAILABLE_MODULES = MODULE_LABELS
 
-const INITIAL_PERMISSIONS = { creater: false, update: false, read: false, delete: false, password: false }
+type PermissionKey =
+  | 'creater'
+  | 'read'
+  | 'update'
+  | 'delete'
+  | 'password'
+  | 'falta'
+  | 'time'
+  | 'producao'
+  | 'config'
+
+const BASE_PERMISSIONS: PermissionKey[] = ['creater', 'read', 'update', 'delete', 'password']
+const OPERATIONS_PERMISSIONS: PermissionKey[] = ['falta', 'time', 'producao', 'config']
+
+const INITIAL_PERMISSIONS: Record<PermissionKey, boolean> = {
+  creater: false,
+  read: false,
+  update: false,
+  delete: false,
+  password: false,
+  falta: false,
+  time: false,
+  producao: false,
+  config: false,
+}
 
 export default function UserForm({ newUser, setNewUser, isCreating, createFeedback, onCancel, onSubmit, readonly = false }: Props) {
   const [permissoes, setPermissoes] = useState(INITIAL_PERMISSIONS)
@@ -152,9 +176,20 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
     return sectors.includes('TODOS')
   }
 
+  const getPermissionKeysForModule = () => {
+    const isOperationsModule = newUser.modules === 'OPERACOES' || newUser.modules === 'OPERACAO'
+    const base = BASE_PERMISSIONS.filter((k) => (k === 'password' ? newUser.modules === 'SEGURANCA' : true))
+    if (isOperationsModule) {
+      return [...base, ...OPERATIONS_PERMISSIONS]
+    }
+    return base
+  }
+
   const handleAddModule = () => {
     if (!newUser.modules) return
-    const selectedPerms = Object.entries(permissoes).filter(([, checked]) => checked).map(([k]) => k.toUpperCase())
+    const selectedPerms = getPermissionKeysForModule()
+      .filter((key) => permissoes[key])
+      .map((key) => key.toUpperCase())
     if (selectedPerms.length === 0) return
     const moduleString = `${newUser.modules} (${selectedPerms.join(',')})`
     const current = getModulesArray()
@@ -329,46 +364,52 @@ export default function UserForm({ newUser, setNewUser, isCreating, createFeedba
         </select>
 
         {newUser.modules && !readonly && (
-          <div className="flex items-center gap-2 mt-3 w-full">
-            {Object.keys(permissoes).map((k) => {
-              // Mostrar PASSWORD apenas quando módulo Segurança for selecionado
-              if (k === 'password' && newUser.modules !== 'SEGURANCA') {
-                return null
-              }
-              return (
-              <label key={k} className="cursor-pointer flex items-center gap-1.5" title={k.toUpperCase()}>
+          <div className="flex flex-wrap items-center gap-2 mt-3 w-full">
+            {getPermissionKeysForModule().map((key) => (
+              <label key={key} className="cursor-pointer flex items-center gap-1.5" title={key.toUpperCase()}>
                 <input
                   type="checkbox"
-                  checked={(permissoes as any)[k]}
-                  onChange={(e) => setPermissoes((p) => ({ ...p, [k]: e.target.checked }))}
+                  checked={permissoes[key]}
+                  onChange={(e) => setPermissoes((p) => ({ ...p, [key]: e.target.checked }))}
                   className="sr-only"
                 />
                 <div
                   className={`w-8 h-8 flex items-center justify-center rounded bg-[#2b2b40] border border-gray-600 peer-checked:border-[#10b981] peer-checked:bg-[#10b981]/20 transition-all ${
-                    (permissoes as any)[k]
-                        ? (k === 'creater'
-                          ? 'bg-amber-600/12 border border-amber-500/80 ring-2 ring-amber-300/50'
-                          : k === 'update'
-                          ? 'bg-sky-600/10 border border-sky-500/80 ring-2 ring-sky-300/50'
-                          : k === 'delete'
-                          ? 'bg-red-600/10 border border-red-500/80 ring-2 ring-red-300/50'
-                          : k === 'read'
-                          ? 'bg-emerald-500/10 border border-emerald-400/80 ring-2 ring-emerald-300/50'
-                          : k === 'password'
-                          ? 'bg-violet-600/10 border border-violet-400/80 ring-2 ring-violet-300/50'
-                          : '')
+                    permissoes[key]
+                      ? (key === 'creater'
+                        ? 'bg-amber-600/12 border border-amber-500/80 ring-2 ring-amber-300/50'
+                        : key === 'update'
+                        ? 'bg-sky-600/10 border border-sky-500/80 ring-2 ring-sky-300/50'
+                        : key === 'delete'
+                        ? 'bg-red-600/10 border border-red-500/80 ring-2 ring-red-300/50'
+                        : key === 'read'
+                        ? 'bg-emerald-500/10 border border-emerald-400/80 ring-2 ring-emerald-300/50'
+                        : key === 'password'
+                        ? 'bg-violet-600/10 border border-violet-400/80 ring-2 ring-violet-300/50'
+                        : key === 'falta'
+                        ? 'bg-rose-600/10 border border-rose-500/80 ring-2 ring-rose-300/50'
+                        : key === 'time'
+                        ? 'bg-cyan-600/10 border border-cyan-500/80 ring-2 ring-cyan-300/50'
+                        : key === 'producao'
+                        ? 'bg-amber-600/10 border border-amber-500/80 ring-2 ring-amber-300/50'
+                        : key === 'config'
+                        ? 'bg-indigo-600/10 border border-indigo-500/80 ring-2 ring-indigo-300/50'
+                        : '')
                       : 'hover:bg-white/6'
                   }`}
                 >
-                  {k === 'creater' ? <UserPlus size={22} className={`${(permissoes as any)[k] ? 'text-amber-400' : 'text-gray-500'}`} /> : null}
-                  {k === 'update' ? <Edit size={22} className={`${(permissoes as any)[k] ? 'text-blue-400' : 'text-gray-500'}`} /> : null}
-                  {k === 'delete' ? <Trash2 size={22} className={`${(permissoes as any)[k] ? 'text-red-400' : 'text-gray-500'}`} /> : null}
-                  {k === 'read' ? <Eye size={22} className={`${(permissoes as any)[k] ? 'text-emerald-400' : 'text-gray-500'}`} /> : null}
-                  {k === 'password' ? <RotateCcwKey size={25} className={`${(permissoes as any)[k] ? 'text-violet-400' : 'text-gray-500'}`} /> : null}
+                  {key === 'creater' ? <UserPlus size={22} className={permissoes[key] ? 'text-amber-400' : 'text-gray-500'} /> : null}
+                  {key === 'update' ? <Edit size={22} className={permissoes[key] ? 'text-blue-400' : 'text-gray-500'} /> : null}
+                  {key === 'delete' ? <Trash2 size={22} className={permissoes[key] ? 'text-red-400' : 'text-gray-500'} /> : null}
+                  {key === 'read' ? <Eye size={22} className={permissoes[key] ? 'text-emerald-400' : 'text-gray-500'} /> : null}
+                  {key === 'password' ? <RotateCcwKey size={25} className={permissoes[key] ? 'text-violet-400' : 'text-gray-500'} /> : null}
+                  {key === 'falta' ? <CalendarX2 size={22} className={permissoes[key] ? 'text-rose-400' : 'text-gray-500'} /> : null}
+                  {key === 'time' ? <Clock10 size={22} className={permissoes[key] ? 'text-cyan-400' : 'text-gray-500'} /> : null}
+                  {key === 'producao' ? <Factory size={22} className={permissoes[key] ? 'text-amber-400' : 'text-gray-500'} /> : null}
+                  {key === 'config' ? <Settings size={22} className={permissoes[key] ? 'text-indigo-400' : 'text-gray-500'} /> : null}
                 </div>
               </label>
-            )
-            })}
+            ))}
 
             <button
               type="button"

@@ -119,7 +119,7 @@ const Security: React.FC<SecurityProps> = ({
       if (!supabaseUrl || !supabaseKey) return
       try {
         const url = new URL(`${supabaseUrl}/rest/v1/user_registration`)
-        url.searchParams.set('select', 'id,name,username,type_user,is_authorized,job_title,allowed_sector,security,evaluation,database,benefits,table_load,communication,development,shift_schedule_and_vacation,payroll,infrastructure,recruitment,health_and_safety,security,training')
+        url.searchParams.set('select', 'id,name,username,type_user,is_authorized,job_title,allowed_sector,security,evaluation,database,benefits,table_load,communication,development,shift_schedule_and_vacation,payroll,infrastructure,operations,recruitment,health_and_safety,security,training')
         url.searchParams.set('order', 'name.asc')
 
         const response = await fetch(url.toString(), {
