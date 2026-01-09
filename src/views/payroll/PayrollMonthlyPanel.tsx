@@ -205,6 +205,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
             status: number | null
             date_hiring: string | null
             date_status: string | null
+            role: string | null
             sex: string | null
           }
         >()
@@ -218,7 +219,7 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
             date_hiring: row.date_hiring ?? null,
             date_status: row.date_status ?? null,
             role: row.role ?? null,
-            sex: (row as any).sex ?? null,
+            sex: row.sex ?? null,
           })
         })
         setEmployeeInfo(sectorMap)
@@ -1050,6 +1051,9 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
         const regKey = normalizeRegistration(row.registration)
         const competenceParsed = parseYearMonth(row.competence)
         if (!regKey || !competenceParsed) return
+        const info = employeeInfo.get(regKey)
+        if (companyFilter && String(info?.company ?? '') !== companyFilter) return
+        if (sectorFilter && info?.sector !== sectorFilter) return
         if (!closingRegistrationsByMonth.get(competenceParsed.month)?.has(regKey)) return
         const { month } = competenceParsed
         if (!monthMap.has(month)) {
@@ -1095,6 +1099,9 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
 
       const regKey = normalizeRegistration(row.registration)
       if (!regKey || !closingRegistrations.has(regKey)) return
+      const info = employeeInfo.get(regKey)
+      if (companyFilter && String(info?.company ?? '') !== companyFilter) return
+      if (sectorFilter && info?.sector !== sectorFilter) return
 
       const sector = abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
       if (!sectorMap.has(sector)) {
@@ -1133,7 +1140,15 @@ const PayrollMonthlyPanel: React.FC<PayrollMonthlyPanelProps> = ({ supabaseKey, 
         ...item,
         color: CHART_COLORS[index % CHART_COLORS.length],
       }))
-  }, [monthFilter, payrollRows, employeeInfo, closingRegistrations, closingRegistrationsByMonth])
+  }, [
+    monthFilter,
+    payrollRows,
+    employeeInfo,
+    closingRegistrations,
+    closingRegistrationsByMonth,
+    companyFilter,
+    sectorFilter,
+  ])
 
   const absenceByStatusChartData = useMemo(() => {
     const isAllMonths = monthFilter === ''

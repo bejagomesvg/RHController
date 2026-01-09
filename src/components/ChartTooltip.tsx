@@ -5,6 +5,7 @@ type ChartTooltipItem = {
   value: string | number
   color?: string
   emphasize?: boolean
+  valueClassName?: string
 }
 
 type ChartTooltipProps = {
@@ -26,7 +27,7 @@ export const ChartTooltip: React.FC<ChartTooltipProps> = ({ title, items, align 
           <div key={idx} className={`flex items-center ${align === 'start' ? 'justify-between gap-3' : 'justify-center gap-2'}`}>
             {item.color ? <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} /> : null}
             {item.label ? <span className="text-white/80">{item.label}</span> : null}
-            <span className={`text-purple-300 font-semibold ${item.emphasize ? 'text-emerald-300' : ''}`}>
+            <span className={item.valueClassName ?? `text-purple-300 font-semibold ${item.emphasize ? 'text-emerald-300' : ''}`}>
               {item.value}
             </span>
           </div>

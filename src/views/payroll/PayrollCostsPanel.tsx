@@ -122,6 +122,27 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
     )
   }
 
+  const extraValueTooltip = ({ active, payload }: TooltipContentProps<any, any>) => {
+    if (!active || !payload || payload.length === 0) return null
+    const data = payload[0]?.payload as { label?: string; totalValue?: number; totalEmployees?: number; color?: string }
+    if (!data) return null
+    return (
+      <ChartTooltip
+        title={data.label}
+        items={[
+          {
+            value: formatCurrency(Number(data.totalValue ?? 0)),
+            color: data.color ?? '#22c55e',
+          },
+          {
+            value: formatNumber(Number(data.totalEmployees ?? 0)),
+            valueClassName: 'text-white/80 font-semibold',
+          },
+        ]}
+      />
+    )
+  }
+
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(value)
 
@@ -464,7 +485,7 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
 
   const extraChartData = useMemo(() => {
     const isAllMonths = monthFilter === ''
-    const map = new Map<string, number>()
+    const map = new Map<string, { totalValue: number; employees: Set<string> }>()
 
     costEventRows.forEach((row) => {
       if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
@@ -475,19 +496,52 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
       if (Number(yearFilter || parsed.year) !== parsed.year) return
 
       const key = isAllMonths ? formatMonthLabel(parsed.month) : abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
-      map.set(key, (map.get(key) || 0) + (row.volue ?? 0))
+      if (!map.has(key)) {
+        map.set(key, { totalValue: 0, employees: new Set() })
+      }
+      map.get(key)!.totalValue += row.volue ?? 0
+      map.get(key)!.employees.add(regKey)
     })
 
     const entries = Array.from(map.entries())
     const sorted = isAllMonths
       ? entries.sort((a, b) => a[0].localeCompare(b[0]))
-      : entries.sort((a, b) => b[1] - a[1])
+      : entries.sort((a, b) => b[1].totalValue - a[1].totalValue)
 
-    return sorted.map(([label, totalValue], idx) => ({
+    return sorted.map(([label, totals], idx) => ({
       label,
-      totalValue,
+      totalValue: totals.totalValue,
+      totalEmployees: totals.employees.size,
       color: CHART_COLORS[idx % CHART_COLORS.length],
     }))
+  }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
+
+  const extraEmployeesChartData = useMemo(() => {
+    const sectorMap = new Map<string, Set<string>>()
+
+    costEventRows.forEach((row) => {
+      if (!row.events || !COST_EVENT_IDS.HORAS_EXTRAS.includes(row.events)) return
+      const regKey = normalizeRegistration(row.registration)
+      if (!regKey || !filteredRegistrations.has(regKey)) return
+      const parsed = parseYearMonth(row.competence)
+      if (!parsed) return
+      if (Number(yearFilter || parsed.year) !== parsed.year) return
+
+      const sector = abbreviateSector(employeeInfo.get(regKey)?.sector ?? null)
+      if (!sectorMap.has(sector)) {
+        sectorMap.set(sector, new Set())
+      }
+      sectorMap.get(sector)!.add(regKey)
+    })
+
+    return Array.from(sectorMap.entries())
+      .map(([label, regs], idx) => ({
+        label,
+        totalValue: regs.size,
+        color: CHART_COLORS[idx % CHART_COLORS.length],
+      }))
+      .filter((item) => item.totalValue > 0)
+      .sort((a, b) => b.totalValue - a.totalValue)
   }, [costEventRows, employeeInfo, filteredRegistrations, monthFilter, yearFilter])
 
   const dsrChartData = useMemo(() => {
@@ -917,7 +971,7 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
                     tickCount={8}
                     domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.2)]}
                   />
-                  <RechartsTooltip content={countTooltip} cursor={{ fill: 'rgba(148, 163, 184, 0.14)' }} />
+                  <RechartsTooltip content={extraValueTooltip} cursor={{ fill: 'rgba(148, 163, 184, 0.14)' }} />
                 <Bar
                   dataKey="totalValue"
                   radius={[3, 3, 0, 0]}
@@ -938,6 +992,53 @@ const PayrollCostsPanel: React.FC<PayrollCostsPanelProps> = ({ supabaseKey, supa
           </div>
         </div>
 
+
+        <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/50">
+              {`Colaboradores com Horas Extras por Setor${titleSuffix}${refLabel}`}
+            </p>
+            <span className="text-emerald-300 text-xs font-semibold">
+              {formatNumber(extraEmployeesChartData.reduce((sum, item) => sum + item.totalValue, 0))}
+            </span>
+          </div>
+          <div className="mt-3 h-80 rounded-lg border border-white/10 bg-white/5 chart-container">
+            {isLoadingCosts ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Carregando...</div>
+            ) : extraEmployeesChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-white/50 text-sm">Sem dados para exibir.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={extraEmployeesChartData} margin={{ top: 48, right: 5, left: 5, bottom: 15 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#475569" />
+                  <XAxis
+                    dataKey="label"
+                    interval={0}
+                    height={80}
+                    tick={<SectorTick />}
+                    axisLine={{ stroke: '#475569' }}
+                  />
+                  <YAxis
+                    tickFormatter={(tick) => formatNumber(Number(tick))}
+                    tick={{ fill: '#9aa4b3ff', fontSize: 10 }}
+                    axisLine={{ stroke: '#475569' }}
+                    tickCount={8}
+                  />
+                  <RechartsTooltip content={countTooltip} cursor={{ fill: 'rgba(148, 163, 184, 0.14)' }} />
+                  <Bar dataKey="totalValue" radius={[3, 3, 0, 0]} isAnimationActive={false}>
+                    {extraEmployeesChartData.map((entry) => (
+                      <Cell key={entry.label} fill={entry.color} />
+                    ))}
+                    <LabelList
+                      dataKey="totalValue"
+                      content={createRotatedLabelRenderer(formatNumber, { color: '#FFFFFF', fontSize: 12 })}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
 
         <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 shadow-lg">
           <div className="flex items-center justify-between">
